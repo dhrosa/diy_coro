@@ -1,0 +1,27 @@
+additional_commands:
+  diy_cc_test:
+    pargs:
+      nargs: 1
+      flags:
+      - AUTO
+    kwargs:
+      SOURCES: +
+      LIBRARIES: +
+  diy_cc_library:
+    pargs:
+      nargs: 1
+      flags:
+      - AUTO
+      - STATIC
+    kwargs:
+      HEADERS: +
+      SOURCES: +
+      LIBRARIES: +
+  diy_cc_binary:
+    pargs:
+      nargs: 1
+      flags:
+      - AUTO
+    kwargs:
+      SOURCES: +
+      LIBRARIES: +
