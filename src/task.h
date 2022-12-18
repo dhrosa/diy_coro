@@ -19,6 +19,9 @@ class Task {
  public:
   using promise_type = Promise;
 
+  template <typename U>
+  friend struct TaskAwaiter;
+
   Task() = default;
   Task(Task&& other) noexcept = default;
   Task& operator=(Task&& other) noexcept = default;
@@ -32,9 +35,7 @@ class Task {
 
   bool done() const noexcept { return handle_->done(); }
 
-  auto operator co_await();
-
-  T Wait();
+  T Wait() &&;
 
   // Creates a new Task whose value is the result of applying `f` to
   // the retuen value of the current task.
@@ -46,7 +47,6 @@ class Task {
 
   struct VoidPromiseBase;
   struct ValuePromiseBase;
-  struct Awaiter;
 
   Promise& promise() { return handle_.template promise<Promise>(); }
 
@@ -122,9 +122,9 @@ struct Task<T>::Promise
 };
 
 template <typename T>
-struct Task<T>::Awaiter {
+struct TaskAwaiter {
   // The child task whose completion is being awaited.
-  Task<T>* task;
+  Task<T> task;
 
   // Always suspend the parent.
   bool await_ready() const noexcept { return false; }
@@ -132,21 +132,21 @@ struct Task<T>::Awaiter {
   // Tell the child task to resume the parent (current task) when it completes.
   // Then context switch into the child task.
   std::coroutine_handle<> await_suspend(std::coroutine_handle<> parent) {
-    task->promise().parent = parent;
-    return task->handle_.get();
+    task.promise().parent = parent;
+    return task.handle_.get();
   }
 
   // Child task has completed; return its final value.
-  auto await_resume() { return task->promise().ReturnOrThrow(); }
+  auto await_resume() { return task.promise().ReturnOrThrow(); }
 };
 
 template <typename T>
-auto Task<T>::operator co_await() {
-  return Awaiter{this};
+TaskAwaiter<T> operator co_await(Task<T> task) {
+  return {std::move(task)};
 }
 
 template <typename T>
-T Task<T>::Wait() {
+T Task<T>::Wait() && {
   // We create a custom coroutine that synchronously notifies the caller when
   // its complete.
   struct SyncPromise;
@@ -186,9 +186,9 @@ T Task<T>::Wait() {
     }
   };
 
-  auto sync_task = [](Task<T>& task) -> SyncTask {
-    co_return (co_await task);
-  }(*this);
+  auto sync_task = [](Task<T> task) -> SyncTask {
+    co_return (co_await std::move(task));
+  }(std::move(*this));
   SyncPromise& promise = sync_task.handle.template promise<SyncPromise>();
   promise.complete.wait();
   return promise.ReturnOrThrow();
@@ -198,6 +198,6 @@ template <typename T>
 template <typename F, typename... Args>
 auto Task<T>::Map(F&& f, Args&&... args) && -> Task<MapResult<F, Args...>> {
   return [](Task<T> task, F f, Args... args) -> Task<MapResult<F, Args...>> {
-    co_return f(co_await task, args...);
+    co_return f((co_await std::move(task)), args...);
   }(std::move(*this), std::move(f), std::move(args)...);
 }

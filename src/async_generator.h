@@ -30,7 +30,7 @@ class AsyncGenerator {
   Task<T*> operator()();
 
   // Makes AsyncGneerator awaitable as if by awaiting on operator().
-  auto operator co_await() { return (*this)().operator co_await(); }
+  TaskAwaiter<T*> operator co_await();
 
   // Creates a new AsyncGenerator whose values are the result of applying `f` to
   // each value of the current generator.
@@ -137,6 +137,11 @@ struct AsyncGenerator<T>::AdvanceAwaiter {
     return &promise.value;
   }
 };
+
+template <typename T>
+TaskAwaiter<T*> AsyncGenerator<T>::operator co_await() {
+  return {(*this)()};
+}
 
 // Awaitable created in the generator coroutine that context switches into the
 // parent coroutine's body.

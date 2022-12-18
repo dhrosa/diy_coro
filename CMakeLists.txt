@@ -2,6 +2,17 @@ cmake_minimum_required(VERSION 3.24)
 set(CMAKE_CXX_STANDARD 20)
 project(diy_coro LANGUAGES CXX)
 
+add_compile_options(
+  -O0
+  -g3
+  -ggdb
+  -Wall
+  -Werror
+  -fno-omit-frame-pointer
+  -fno-optimize-sibling-calls
+  -fsanitize=address)
+add_link_options(-fsanitize=address)
+
 find_program(CCACHE_PROGRAM ccache)
 if(CCACHE_PROGRAM)
   message(STATUS "Enabling ccache")
@@ -31,7 +42,7 @@ include(Diy)
 include(GoogleTest)
 enable_testing()
 
-add_subdirectory(src)
+add_subdirectory(src diy_coro)
 
 add_custom_target(
   format_cc
