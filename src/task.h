@@ -12,15 +12,13 @@
 template <typename T = void>
 class Task {
   struct Promise;
+  struct Awaiter;
 
   template <typename F, typename... Args>
   using MapResult = std::invoke_result_t<F, T, Args...>;
 
  public:
   using promise_type = Promise;
-
-  template <typename U>
-  friend struct TaskAwaiter;
 
   Task() = default;
   Task(Task&& other) noexcept = default;
@@ -35,12 +33,16 @@ class Task {
 
   bool done() const noexcept { return handle_->done(); }
 
+  // Synchronously waits for this task to complete, and returns its value.
   T Wait() &&;
 
   // Creates a new Task whose value is the result of applying `f` to
   // the retuen value of the current task.
   template <typename F, typename... Args>
   Task<MapResult<F, Args...>> Map(F&& f, Args&&... args) &&;
+
+  // Converts this task to an awaitable.
+  Awaiter ToAwaiter() &&;
 
  private:
   static constexpr bool kIsVoidTask = std::same_as<T, void>;
@@ -52,6 +54,20 @@ class Task {
 
   Handle handle_;
 };
+
+// co_await support for Task
+template <typename T>
+auto operator co_await(Task<T> task) {
+  return std::move(task).ToAwaiter();
+}
+
+// Helper for explicitly naming the type of (co_await Task<T>).
+template <typename T>
+using TaskAwaiter = decltype(std::declval<Task<T>>().ToAwaiter());
+
+////////////////////
+// Implementation //
+////////////////////
 
 template <typename T>
 struct Task<T>::VoidPromiseBase {
@@ -122,9 +138,9 @@ struct Task<T>::Promise
 };
 
 template <typename T>
-struct TaskAwaiter {
+struct Task<T>::Awaiter {
   // The child task whose completion is being awaited.
-  Task<T> task;
+  Task task;
 
   // Always suspend the parent.
   bool await_ready() const noexcept { return false; }
@@ -141,8 +157,8 @@ struct TaskAwaiter {
 };
 
 template <typename T>
-TaskAwaiter<T> operator co_await(Task<T> task) {
-  return {std::move(task)};
+auto Task<T>::ToAwaiter() && -> Task<T>::Awaiter {
+  return Awaiter{std::move(*this)};
 }
 
 template <typename T>

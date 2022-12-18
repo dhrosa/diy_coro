@@ -48,6 +48,10 @@ class AsyncGenerator {
   Handle handle_;
 };
 
+////////////////////
+// Implementation //
+////////////////////
+
 template <typename T>
 AsyncGenerator<T>::AsyncGenerator(Generator<T> sync_generator) {
   *this = [](Generator<T> gen) -> AsyncGenerator<T> {
