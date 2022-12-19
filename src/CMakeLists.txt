@@ -13,3 +13,6 @@ diy_cc_test(generator_test AUTO)
 
 diy_cc_library(async_generator AUTO LIBRARIES handle task generator)
 diy_cc_test(async_generator_test AUTO)
+
+diy_cc_library(executor AUTO LIBRARIES absl::synchronization)
+diy_cc_test(executor_test AUTO task)
