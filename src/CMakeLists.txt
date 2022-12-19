@@ -3,6 +3,9 @@ diy_cc_library(
   SOURCES test_main.cc
   LIBRARIES gtest absl::failure_signal_handler)
 
+diy_cc_library(traits AUTO)
+diy_cc_test(traits_test AUTO)
+
 diy_cc_library(handle AUTO)
 
 diy_cc_library(task AUTO)
