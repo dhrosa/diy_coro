@@ -1,9 +1,9 @@
-#include "executor.h"
+#include "diy/coro/executor.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include "task.h"
+#include "diy/coro/task.h"
 
 TEST(ExecutorTest, ThreadIdMatches) {
   auto task = [](SerialExecutor& executor) -> Task<std::thread::id> {

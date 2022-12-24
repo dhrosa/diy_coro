@@ -1,4 +1,4 @@
-#include "generator.h"
+#include "diy/coro/generator.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>

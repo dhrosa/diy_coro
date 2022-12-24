@@ -3,10 +3,10 @@
 #include <stdexcept>
 #include <type_traits>
 
-#include "generator.h"
-#include "handle.h"
-#include "task.h"
-#include "traits.h"
+#include "diy/coro/generator.h"
+#include "diy/coro/handle.h"
+#include "diy/coro/task.h"
+#include "diy/coro/traits.h"
 
 template <typename T>
 class AsyncGenerator {

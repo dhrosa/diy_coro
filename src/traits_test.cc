@@ -1,4 +1,4 @@
-#include "traits.h"
+#include "diy/coro/traits.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
