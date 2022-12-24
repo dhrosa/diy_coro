@@ -1,3 +1,5 @@
+include(GoogleTest)
+
 function(diy_cc_test name)
   set(options "AUTO")
   set(single_value_args "")
