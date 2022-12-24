@@ -6,6 +6,7 @@
 #include "generator.h"
 #include "handle.h"
 #include "task.h"
+#include "traits.h"
 
 template <typename T>
 class AsyncGenerator {
@@ -30,7 +31,7 @@ class AsyncGenerator {
   Task<T*> operator()();
 
   // Makes AsyncGneerator awaitable as if by awaiting on operator().
-  TaskAwaiter<T*> operator co_await();
+  traits::AwaiterType<Task<T*>> operator co_await();
 
   // Creates a new AsyncGenerator whose values are the result of applying `f` to
   // each value of the current generator.
@@ -143,7 +144,7 @@ struct AsyncGenerator<T>::AdvanceAwaiter {
 };
 
 template <typename T>
-TaskAwaiter<T*> AsyncGenerator<T>::operator co_await() {
+traits::AwaiterType<Task<T*>> AsyncGenerator<T>::operator co_await() {
   return {(*this)()};
 }
 

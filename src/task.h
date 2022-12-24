@@ -61,10 +61,6 @@ auto operator co_await(Task<T> task) {
   return std::move(task).ToAwaiter();
 }
 
-// Helper for explicitly naming the type of (co_await Task<T>).
-template <typename T>
-using TaskAwaiter = decltype(std::declval<Task<T>>().ToAwaiter());
-
 ////////////////////
 // Implementation //
 ////////////////////
