@@ -34,9 +34,6 @@ diy_cc_test(async_generator_test AUTO)
 diy_cc_library(executor AUTO LIBRARIES absl::synchronization absl::time)
 diy_cc_test(executor_test AUTO task)
 
-diy_cc_library(sleep AUTO LIBRARIES absl::time)
-diy_cc_test(sleep_test AUTO task)
-
 # Top-level target for public consumption.
 add_library(diy_coro INTERFACE)
 target_link_libraries(
@@ -46,7 +43,6 @@ target_link_libraries(
             task
             generator
             async_generator
-            sleep
             executor)
 target_include_directories(diy_coro
                            INTERFACE "${CMAKE_CURRENT_BINARY_DIR}/include")
