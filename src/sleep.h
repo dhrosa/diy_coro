@@ -7,9 +7,9 @@
 #include <thread>
 
 // An awaitable that suspends the current coroutine until at least the given
-// `time`, at which point the coroutine is resumed on another thread. This
-// spawns a new thread for each sleep, so this is inefficient for short duration
-// sleeps.
+// `time`, at which point the coroutine is resumed (possibly on on another
+// thread). This spawns a new thread for each sleep, so this is inefficient for
+// short duration sleeps.
 auto Sleep(absl::Time time) {
   struct Awaiter {
     absl::Time time;

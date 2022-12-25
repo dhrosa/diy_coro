@@ -68,7 +68,7 @@ template <typename T>
 struct Task<T>::ValuePromiseBase {
   T final_value;
 
-  template <typename U>
+  template <typename U = T>
   void return_value(U&& value) {
     this->final_value = std::move(value);
   }
