@@ -39,7 +39,14 @@ diy_cc_test(sleep_test AUTO task)
 
 # Top-level target for public consumption.
 add_library(diy_coro INTERFACE)
-target_link_libraries(diy_coro INTERFACE traits handle task generator
-                                         async_generator)
+target_link_libraries(
+  diy_coro
+  INTERFACE traits
+            handle
+            task
+            generator
+            async_generator
+            sleep
+            executor)
 target_include_directories(diy_coro
                            INTERFACE "${CMAKE_CURRENT_BINARY_DIR}/include")
