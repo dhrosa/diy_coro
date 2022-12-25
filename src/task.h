@@ -48,6 +48,7 @@ class Task {
 
   struct VoidPromiseBase;
   struct ValuePromiseBase;
+  struct PromiseBase;
 
   Promise& promise() { return handle_.template promise<Promise>(); }
 
@@ -74,11 +75,27 @@ struct Task<T>::ValuePromiseBase {
 };
 
 template <typename T>
-struct Task<T>::Promise
+struct Task<T>::PromiseBase
     : std::conditional_t<kIsVoidTask, VoidPromiseBase, ValuePromiseBase> {
   // The exception thrown by body of the task, if any.
   std::exception_ptr exception;
 
+  void unhandled_exception() { exception = std::current_exception(); }
+
+  T ReturnOrThrow() {
+    if (this->exception) {
+      std::rethrow_exception(this->exception);
+    }
+    if constexpr (kIsVoidTask) {
+      return;
+    } else {
+      return std::move(this->final_value);
+    }
+  }
+};
+
+template <typename T>
+struct Task<T>::Promise : PromiseBase {
   // The suspended coroutine awaiting this task's completion, if any.
   std::coroutine_handle<> parent;
 
@@ -110,19 +127,6 @@ struct Task<T>::Promise
       void await_resume() noexcept {}
     };
     return FinalAwaiter{std::exchange(parent, nullptr)};
-  }
-
-  void unhandled_exception() { exception = std::current_exception(); }
-
-  T ReturnOrThrow() {
-    if (exception) {
-      std::rethrow_exception(exception);
-    }
-    if constexpr (kIsVoidTask) {
-      return;
-    } else {
-      return std::move(this->final_value);
-    }
   }
 };
 
@@ -160,16 +164,13 @@ T Task<T>::Wait() && {
     using promise_type = SyncPromise;
   };
 
-  struct SyncPromise
-      : std::conditional_t<kIsVoidTask, VoidPromiseBase, ValuePromiseBase> {
+  struct SyncPromise : PromiseBase {
     std::latch complete{1};
-    std::exception_ptr exception;
 
     SyncTask get_return_object() {
       return {Handle(std::coroutine_handle<SyncPromise>::from_promise(*this))};
     }
 
-    void unhandled_exception() { exception = std::current_exception(); }
     auto initial_suspend() { return std::suspend_never{}; }
 
     // We can't signal completion directly inside final_suspend, as this member
@@ -186,17 +187,6 @@ T Task<T>::Wait() && {
         void await_resume() noexcept {}
       };
       return FinalAwaiter{complete};
-    }
-
-    T ReturnOrThrow() {
-      if (exception) {
-        std::rethrow_exception(exception);
-      }
-      if constexpr (kIsVoidTask) {
-        return;
-      } else {
-        return std::move(this->final_value);
-      }
     }
   };
 
