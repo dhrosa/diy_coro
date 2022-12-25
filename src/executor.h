@@ -8,9 +8,9 @@
 #include <vector>
 
 class SerialExecutor {
- public:
   class ScheduleAwaiter;
 
+ public:
   std::jthread Run();
 
   ScheduleAwaiter Schedule();

@@ -34,6 +34,9 @@ diy_cc_test(async_generator_test AUTO)
 diy_cc_library(executor AUTO LIBRARIES absl::synchronization)
 diy_cc_test(executor_test AUTO task)
 
+diy_cc_library(sleep AUTO LIBRARIES absl::time)
+diy_cc_test(sleep_test AUTO task)
+
 # Top-level target for public consumption.
 add_library(diy_coro INTERFACE)
 target_link_libraries(diy_coro INTERFACE traits handle task generator
