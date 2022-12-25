@@ -41,7 +41,6 @@ function(diy_cc_library name)
   target_sources(${name} PRIVATE ${_HEADERS} ${_SOURCES})
   set_property(TARGET ${name} PROPERTY LINKER_LANGUAGE CXX)
   target_link_libraries(${name} ${_LIBRARIES})
-  add_library(${diy_package_name}::${name} ALIAS ${name})
 endfunction()
 
 function(diy_cc_binary name)
