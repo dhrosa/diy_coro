@@ -12,7 +12,6 @@
 template <typename T = void>
 class Task {
   struct Promise;
-  struct Awaiter;
 
   template <typename F, typename... Args>
   using MapResult = std::invoke_result_t<F, T, Args...>;
@@ -33,6 +32,9 @@ class Task {
 
   bool done() const noexcept { return handle_->done(); }
 
+  // Creates an awaitable object that awaits the completion of this task.
+  auto operator co_await() &&;
+
   // Synchronously waits for this task to complete, and returns its value.
   T Wait() &&;
 
@@ -40,9 +42,6 @@ class Task {
   // the retuen value of the current task.
   template <typename F, typename... Args>
   Task<MapResult<F, Args...>> Map(F&& f, Args&&... args) &&;
-
-  // Converts this task to an awaitable.
-  Awaiter ToAwaiter() &&;
 
  private:
   static constexpr bool kIsVoidTask = std::same_as<T, void>;
@@ -54,12 +53,6 @@ class Task {
 
   Handle handle_;
 };
-
-// co_await support for Task
-template <typename T>
-auto operator co_await(Task<T> task) {
-  return std::move(task).ToAwaiter();
-}
 
 ////////////////////
 // Implementation //
@@ -134,26 +127,24 @@ struct Task<T>::Promise
 };
 
 template <typename T>
-struct Task<T>::Awaiter {
-  // The child task whose completion is being awaited.
-  Task task;
+auto Task<T>::operator co_await() && {
+  struct Awaiter {
+    // The child task whose completion is being awaited.
+    Task task;
 
-  // Always suspend the parent.
-  bool await_ready() const noexcept { return false; }
+    // Always suspend the parent.
+    bool await_ready() const noexcept { return false; }
 
-  // Tell the child task to resume the parent (current task) when it completes.
-  // Then context switch into the child task.
-  std::coroutine_handle<> await_suspend(std::coroutine_handle<> parent) {
-    task.promise().parent = parent;
-    return task.handle_.get();
-  }
+    // Tell the child task to resume the parent (current task) when it
+    // completes. Then context switch into the child task.
+    std::coroutine_handle<> await_suspend(std::coroutine_handle<> parent) {
+      task.promise().parent = parent;
+      return task.handle_.get();
+    }
 
-  // Child task has completed; return its final value.
-  auto await_resume() { return task.promise().ReturnOrThrow(); }
-};
-
-template <typename T>
-auto Task<T>::ToAwaiter() && -> Task<T>::Awaiter {
+    // Child task has completed; return its final value.
+    auto await_resume() { return task.promise().ReturnOrThrow(); }
+  };
   return Awaiter{std::move(*this)};
 }
 
