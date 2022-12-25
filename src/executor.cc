@@ -1,7 +1,7 @@
 #include "diy/coro/executor.h"
 
 std::jthread SerialExecutor::Run() {
-  return std::jthread([this](std::stop_token stop_token) {
+  std::jthread thread = std::jthread([this](std::stop_token stop_token) {
     const auto on_stop = std::stop_callback(stop_token, [this] {
       absl::MutexLock lock(&mutex_);
       stop_requested_ = true;
@@ -24,6 +24,8 @@ std::jthread SerialExecutor::Run() {
       pending.resume();
     }
   });
+  thread_id_ = thread.get_id();
+  return thread;
 }
 
 void SerialExecutor::AwaitSuspend(std::coroutine_handle<> pending) {

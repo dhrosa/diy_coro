@@ -23,6 +23,9 @@ class SerialExecutor {
  private:
   void AwaitSuspend(std::coroutine_handle<> pending);
 
+  // The ID of the thread created by Run().
+  std::thread::id thread_id_;
+
   absl::Mutex mutex_;
   std::coroutine_handle<> pending_ ABSL_GUARDED_BY(mutex_);
   bool stop_requested_ ABSL_GUARDED_BY(mutex_) = false;
@@ -32,7 +35,11 @@ inline auto SerialExecutor::Schedule() {
   struct Awaiter {
     SerialExecutor* executor;
 
-    constexpr bool await_ready() { return false; }
+    // If we're already running on this thread, then we don't need to actually
+    // do anything.
+    bool await_ready() {
+      return std::this_thread::get_id() == executor->thread_id_;
+    }
 
     void await_suspend(std::coroutine_handle<> pending) {
       executor->AwaitSuspend(pending);
