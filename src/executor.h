@@ -1,19 +1,24 @@
 #pragma once
 
 #include <absl/synchronization/mutex.h>
+#include <absl/time/time.h>
 
 #include <coroutine>
 #include <stop_token>
 #include <thread>
 #include <vector>
 
-class SerialExecutor {
-  class ScheduleAwaiter;
+#include "diy/coro/task.h"
 
+class SerialExecutor {
  public:
   std::jthread Run();
 
-  ScheduleAwaiter Schedule();
+  // Awaitable that resumes execution of the current coroutine on this executor.
+  auto Schedule();
+  // Awaitable that resumes execution of the current coroutine on this executor
+  // after the given time has passed.
+  auto Sleep(absl::Time time);
 
  private:
   void AwaitSuspend(std::coroutine_handle<> pending);
@@ -23,18 +28,24 @@ class SerialExecutor {
   bool stop_requested_ ABSL_GUARDED_BY(mutex_) = false;
 };
 
-class SerialExecutor::ScheduleAwaiter {
- public:
-  constexpr bool await_ready() { return false; }
+inline auto SerialExecutor::Schedule() {
+  struct Awaiter {
+    SerialExecutor* executor;
 
-  void await_suspend(std::coroutine_handle<> pending) {
-    executor_->AwaitSuspend(pending);
-  }
+    constexpr bool await_ready() { return false; }
 
-  constexpr void await_resume() {}
+    void await_suspend(std::coroutine_handle<> pending) {
+      executor->AwaitSuspend(pending);
+    }
 
- private:
-  friend class SerialExecutor;
-  explicit ScheduleAwaiter(SerialExecutor* executor) : executor_(executor) {}
-  SerialExecutor* const executor_;
+    constexpr void await_resume() {}
+  };
+  return Awaiter{this};
 };
+
+inline auto SerialExecutor::Sleep(absl::Time time) {
+  return [](SerialExecutor& executor, absl::Time time) -> Task<> {
+    co_await executor.Schedule();
+    absl::SleepFor(time - absl::Now());
+  }(*this, time);
+}

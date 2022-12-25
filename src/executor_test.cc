@@ -34,3 +34,18 @@ TEST(ExecutorTest, RecursiveScheduling) {
   task(executor, complete).Wait();
   EXPECT_TRUE(complete);
 }
+
+TEST(ExecutorTest, SleepsForCorrectDuration) {
+  auto task = [](SerialExecutor& executor) -> Task<absl::Duration> {
+    co_await executor.Schedule();
+    const absl::Time start = absl::Now();
+    co_await executor.Sleep(start + absl::Milliseconds(100));
+    co_return absl::Now() - start;
+  };
+
+  SerialExecutor executor;
+  std::jthread thread = executor.Run();
+  const absl::Duration elapsed = task(executor).Wait();
+  EXPECT_GE(elapsed, absl::Milliseconds(100));
+  EXPECT_LE(elapsed, absl::Milliseconds(200));
+}

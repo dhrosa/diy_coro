@@ -26,10 +26,6 @@ std::jthread SerialExecutor::Run() {
   });
 }
 
-auto SerialExecutor::Schedule() -> ScheduleAwaiter {
-  return ScheduleAwaiter(this);
-}
-
 void SerialExecutor::AwaitSuspend(std::coroutine_handle<> pending) {
   const auto idle_or_stopping = [this]()
                                     ABSL_SHARED_LOCKS_REQUIRED(mutex_) -> bool {
