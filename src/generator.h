@@ -61,13 +61,18 @@ struct Generator<T>::Promise {
   std::suspend_always final_suspend() noexcept { return {}; }
   void unhandled_exception() { exception = std::current_exception(); }
 
-  template <std::convertible_to<T> U>
+  template <std::convertible_to<T> U = T>
   std::suspend_always yield_value(U&& new_value) {
     value = std::forward<U>(new_value);
     return {};
   }
 
   void return_void() {}
+
+  // Disallow co_await within the coroutine body; generators must be
+  // synchronous.
+  template <typename A>
+  auto await_transform(A&&) = delete;
 };
 
 // Models an input iterator.
