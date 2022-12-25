@@ -67,18 +67,23 @@ TEST(TaskTest, ValueToVoidConversion) {
 // Awaitable that transfers execution of the coroutine to the given thread.
 auto TransferToThread(std::jthread& thread) {
   struct Awaiter {
-    std::jthread* thread;
+    std::jthread& thread;
 
     bool await_ready() { return false; }
 
     void await_suspend(std::coroutine_handle<> handle) {
-      *thread = std::jthread(handle);
+      // We can't directly assign to this->thread because as soon as we
+      // construct the new thread it will concurrently resume the handle,
+      // causing a race on our member variables. Instead we create a local
+      // variable which is only directly accessed by this scope.
+      std::jthread* const pointer = &thread;
+      *pointer = std::jthread(handle);
     }
 
     void await_resume() {}
   };
 
-  return Awaiter{&thread};
+  return Awaiter{thread};
 }
 
 TEST(TaskTest, ThreadTransfer) {

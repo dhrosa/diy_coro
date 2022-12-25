@@ -15,12 +15,13 @@ if(PROJECT_IS_TOP_LEVEL)
     -O0
     -g3
     -ggdb
+    -gcolumn-info
     -Wall
     -Werror
     -fno-omit-frame-pointer
     -fno-optimize-sibling-calls
-    -fsanitize=address)
-  add_link_options(-fsanitize=address)
+    -fsanitize=thread)
+  add_link_options(-fsanitize=thread)
 
   include(FetchContent)
 

@@ -169,7 +169,6 @@ T Task<T>::Wait() && {
     using promise_type = SyncPromise;
   };
 
-  // TODO(dhrosa): This is largely similar to Task::Promise.
   struct SyncPromise
       : std::conditional_t<kIsVoidTask, VoidPromiseBase, ValuePromiseBase> {
     std::latch complete{1};
@@ -181,9 +180,21 @@ T Task<T>::Wait() && {
 
     void unhandled_exception() { exception = std::current_exception(); }
     auto initial_suspend() { return std::suspend_never{}; }
+
+    // We can't signal completion directly inside final_suspend, as this member
+    // is called while the coroutine is still executing. We instead utilize the
+    // fact that when  an awaiter's await_suspend() is called,  the coroutine is
+    // guaranteed to be suspended.
     auto final_suspend() noexcept {
-      complete.count_down();
-      return std::suspend_always{};
+      struct FinalAwaiter {
+        std::latch& complete;
+        bool await_ready() noexcept { return false; }
+        void await_suspend(std::coroutine_handle<>) noexcept {
+          complete.count_down();
+        }
+        void await_resume() noexcept {}
+      };
+      return FinalAwaiter{complete};
     }
 
     T ReturnOrThrow() {
