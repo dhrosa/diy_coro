@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+#include <new>
 #include <stdexcept>
 #include <type_traits>
 
@@ -8,6 +10,14 @@
 #include "diy/coro/task.h"
 #include "diy/coro/traits.h"
 
+// Coroutine type for asynchronously producing a sequence of values of unknown
+// (and potentially unbounded) length. Requires only that `T` be moveable; T
+// does not need to be default-constructible.
+//
+// After the body of the coroutine exits, any internally stored value of T is
+// destructed; so leaving an instance of this coroutine in-scope after the final
+// value is yielded will not hold onto its last value for an arbitrary amount of
+// time.
 template <typename T>
 class AsyncGenerator {
   struct Promise;
@@ -64,8 +74,13 @@ AsyncGenerator<T>::AsyncGenerator(Generator<T> sync_generator) {
 
 template <typename T>
 struct AsyncGenerator<T>::Promise {
-  // The last yielded value.
-  T value;
+  // Storage for the last yielded value. Using an uninitialized block of memory
+  // allows us to store values that are not defualt-constructible.
+  alignas(T) std::byte storage[sizeof(T)];
+
+  // Whether or not `storage` currently holds a value.
+  bool has_value = false;
+
   // Exception thrown by coroutine body, if any.
   std::exception_ptr exception;
   // The parent coroutine (if any) to resume when a new value or when the
@@ -79,11 +94,26 @@ struct AsyncGenerator<T>::Promise {
         Handle(std::coroutine_handle<Promise>::from_promise(*this)));
   }
 
+  // Access the stored value. Only valid if has_value is true.
+  T& value() { return *std::launder(reinterpret_cast<T*>(storage)); }
+
+  // Destroy the current value, if any.
+  void destroy_value() {
+    if (!has_value) {
+      return;
+    }
+    value().~T();
+    has_value = false;
+  }
+
+  ~Promise() { destroy_value(); }
+
   std::suspend_always initial_suspend() { return {}; }
 
   // Resume execution of the parent at the end of the coroutine body to notify
   // it that we've reached the end of the sequence.
   YieldAwaiter final_suspend() noexcept {
+    destroy_value();
     exhausted = true;
     return YieldAwaiter{std::exchange(this->parent, nullptr)};
   }
@@ -93,9 +123,14 @@ struct AsyncGenerator<T>::Promise {
 
   // Resume execution of the parent to notify it that a new value is available,
   // and then wait for the parent to request a new value.
-  template <std::convertible_to<T> U=T>
+  template <std::convertible_to<T> U = T>
   auto yield_value(U&& new_value) {
-    value = std::forward<U>(new_value);
+    if (has_value) {
+      value() = std::forward<U>(new_value);
+    } else {
+      new (&storage) T(std::forward<U>(new_value));
+      has_value = true;
+    }
     return YieldAwaiter{std::exchange(this->parent, nullptr)};
   }
 };
@@ -139,7 +174,7 @@ struct AsyncGenerator<T>::AdvanceAwaiter {
     if (promise.exhausted) {
       return nullptr;
     }
-    return &promise.value;
+    return &promise.value();
   }
 };
 

@@ -16,7 +16,7 @@ template <typename T>
 Task<std::vector<T>> Materialize(AsyncGenerator<T> gen) {
   std::vector<T> out;
   while (T* value = co_await gen) {
-    out.push_back(*value);
+    out.emplace_back(std::move(*value));
   }
   co_return out;
 }
@@ -110,4 +110,44 @@ TEST(AsyncGeneratorTest, MapWithExtraArguments) {
   EXPECT_THAT(
       Materialize(gen_a().Map([](int x, int y) { return x * y; }, 2)).Wait(),
       ElementsAre(2, 4, 6));
+}
+
+TEST(AsyncGeneratorTest, NonDefaultConstructibleType) {
+  struct Value {
+    Value() = delete;
+    Value(int x, int& destructor_calls)
+        : x(x), destructor_calls(&destructor_calls) {}
+
+    ~Value() { ++(*destructor_calls); }
+
+    operator int() const { return x; }
+
+    int x;
+    int* destructor_calls;
+  };
+
+  int destructor_calls = 0;
+  auto gen = [](int& destructor_calls) -> AsyncGenerator<Value> {
+    co_yield {1, destructor_calls};
+    co_yield {2, destructor_calls};
+    co_yield {3, destructor_calls};
+  }(destructor_calls);
+
+  // The coroutine is suspended in the middle of co_yield; so the first
+  // temporary should not be destructed yet.
+  EXPECT_THAT(gen().Wait(), Pointee(Eq(1)));
+  EXPECT_EQ(destructor_calls, 0);
+
+  // First temporary destructed; second temporary in-flight.
+  EXPECT_THAT(gen().Wait(), Pointee(Eq(2)));
+  EXPECT_EQ(destructor_calls, 1);
+
+  // Second temporary destructed; third temporary in-flight.
+  EXPECT_THAT(gen().Wait(), Pointee(Eq(3)));
+  EXPECT_EQ(destructor_calls, 2);
+
+  // Generator is exhausted; the third temporary should be destructed, as well
+  // as the value stored internally in the promise.
+  EXPECT_EQ(gen().Wait(), nullptr);
+  EXPECT_EQ(destructor_calls, 4);
 }
