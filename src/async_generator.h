@@ -93,7 +93,7 @@ struct AsyncGenerator<T>::Promise {
 
   // Resume execution of the parent to notify it that a new value is available,
   // and then wait for the parent to request a new value.
-  template <std::convertible_to<T> U>
+  template <std::convertible_to<T> U=T>
   auto yield_value(U&& new_value) {
     value = std::forward<U>(new_value);
     return YieldAwaiter{std::exchange(this->parent, nullptr)};
