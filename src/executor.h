@@ -4,15 +4,18 @@
 #include <absl/time/time.h>
 
 #include <coroutine>
+#include <memory>
 #include <stop_token>
 #include <thread>
 #include <vector>
 
 #include "diy/coro/task.h"
 
+// Allows transferring a coroutine to a different thread than the caller.
 class SerialExecutor {
  public:
-  std::jthread Run();
+  SerialExecutor();
+  ~SerialExecutor();
 
   // Awaitable that resumes execution of the current coroutine on this executor.
   auto Schedule();
@@ -21,25 +24,22 @@ class SerialExecutor {
   auto Sleep(absl::Time time);
 
  private:
+  struct State;
+
+  bool AwaitReady() const;
   void AwaitSuspend(std::coroutine_handle<> pending);
 
-  // The ID of the thread created by Run().
-  std::thread::id thread_id_;
-
-  absl::Mutex mutex_;
-  std::coroutine_handle<> pending_ ABSL_GUARDED_BY(mutex_);
-  bool stop_requested_ ABSL_GUARDED_BY(mutex_) = false;
+  // We use a shared_ptr so that we can asynchronously stop our thread when the
+  // executor is destructed.
+  std::shared_ptr<State> state_;
+  std::jthread thread_;
 };
 
 inline auto SerialExecutor::Schedule() {
   struct Awaiter {
     SerialExecutor* executor;
 
-    // If we're already running on this thread, then we don't need to actually
-    // do anything.
-    bool await_ready() {
-      return std::this_thread::get_id() == executor->thread_id_;
-    }
+    bool await_ready() { return executor->AwaitReady(); }
 
     void await_suspend(std::coroutine_handle<> pending) {
       executor->AwaitSuspend(pending);

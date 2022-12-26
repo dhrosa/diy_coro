@@ -12,8 +12,7 @@ TEST(ExecutorTest, ThreadIdMatches) {
   };
 
   SerialExecutor executor;
-  std::jthread thread = executor.Run();
-  EXPECT_EQ(task(executor).Wait(), thread.get_id());
+  EXPECT_NE(task(executor).Wait(), std::this_thread::get_id());
 }
 
 // It should be possible for a child coroutine to schedule onto the same
@@ -30,7 +29,6 @@ TEST(ExecutorTest, RecursiveScheduling) {
 
   SerialExecutor executor;
   bool complete = false;
-  std::jthread thread = executor.Run();
   task(executor, complete).Wait();
   EXPECT_TRUE(complete);
 }
@@ -44,8 +42,18 @@ TEST(ExecutorTest, SleepsForCorrectDuration) {
   };
 
   SerialExecutor executor;
-  std::jthread thread = executor.Run();
   const absl::Duration elapsed = task(executor).Wait();
   EXPECT_GE(elapsed, absl::Milliseconds(100));
   EXPECT_LE(elapsed, absl::Milliseconds(200));
+}
+
+// We should be able to construct and destruct SerialExecutor within the same
+// coroutine that it's running without deadlock.
+TEST(ExecutorTest, ScopedWithinCoroutine) {
+  auto task = []() -> Task<> {
+    SerialExecutor executor;
+    co_await executor.Schedule();
+  };
+
+  task().Wait();
 }
