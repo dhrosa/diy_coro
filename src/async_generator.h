@@ -1,7 +1,6 @@
 #pragma once
 
-#include <cstddef>
-#include <new>
+#include <optional>
 #include <stdexcept>
 #include <type_traits>
 
@@ -74,12 +73,9 @@ AsyncGenerator<T>::AsyncGenerator(Generator<T> sync_generator) {
 
 template <typename T>
 struct AsyncGenerator<T>::Promise {
-  // Storage for the last yielded value. Using an uninitialized block of memory
-  // allows us to store values that are not defualt-constructible.
-  alignas(T) std::byte storage[sizeof(T)];
-
-  // Whether or not `storage` currently holds a value.
-  bool has_value = false;
+  // Prveiously yielded value. We use std::optional so that we can support
+  // non-default-constructible types, and so that we can manually destroy it.
+  std::optional<T> value;
 
   // Exception thrown by coroutine body, if any.
   std::exception_ptr exception;
@@ -94,26 +90,12 @@ struct AsyncGenerator<T>::Promise {
         Handle(std::coroutine_handle<Promise>::from_promise(*this)));
   }
 
-  // Access the stored value. Only valid if has_value is true.
-  T& value() { return *std::launder(reinterpret_cast<T*>(storage)); }
-
-  // Destroy the current value, if any.
-  void destroy_value() {
-    if (!has_value) {
-      return;
-    }
-    value().~T();
-    has_value = false;
-  }
-
-  ~Promise() { destroy_value(); }
-
   std::suspend_always initial_suspend() { return {}; }
 
   // Resume execution of the parent at the end of the coroutine body to notify
   // it that we've reached the end of the sequence.
   YieldAwaiter final_suspend() noexcept {
-    destroy_value();
+    value.reset();
     exhausted = true;
     return YieldAwaiter{.parent = std::exchange(this->parent, nullptr)};
   }
@@ -125,12 +107,7 @@ struct AsyncGenerator<T>::Promise {
   // and then wait for the parent to request a new value.
   template <std::convertible_to<T> U = T>
   auto yield_value(U&& new_value) {
-    if (has_value) {
-      value() = std::forward<U>(new_value);
-    } else {
-      new (&storage) T(std::forward<U>(new_value));
-      has_value = true;
-    }
+    value = std::forward<U>(new_value);
     return YieldAwaiter{.parent = std::exchange(this->parent, nullptr)};
   }
 };
@@ -172,7 +149,7 @@ struct AsyncGenerator<T>::AdvanceAwaiter : std::suspend_always {
     if (promise.exhausted) {
       return nullptr;
     }
-    return &promise.value();
+    return promise.value ? &(*promise.value) : nullptr;
   }
 };
 
