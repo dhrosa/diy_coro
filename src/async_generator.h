@@ -48,9 +48,6 @@ class AsyncGenerator {
   AsyncGenerator<MapResult<F, Args...>> Map(F&& f, Args&&... args) &&;
 
  private:
-  struct AdvanceAwaiter;
-  struct YieldAwaiter;
-
   AsyncGenerator(Handle handle) : handle_(std::move(handle)) {}
 
   Promise& promise() { return handle_.template promise<Promise>(); }
@@ -95,13 +92,27 @@ struct AsyncGenerator<T>::Promise {
 
   std::suspend_always initial_suspend() { return {}; }
 
-  YieldAwaiter Yield() {
+  // Awaitable created in the generator coroutine that context switches into the
+  // parent coroutine's body.
+  auto Yield() {
+    struct YieldAwaiter : std::suspend_always {
+      std::coroutine_handle<> parent;
+
+      std::coroutine_handle<> await_suspend(
+          [[maybe_unused]] std::coroutine_handle<> producer) noexcept {
+        if (parent) {
+          return parent;
+        }
+        return std::noop_coroutine();
+      }
+    };
+
     return YieldAwaiter{.parent = std::exchange(parent, nullptr)};
   }
 
   // Resume execution of the parent at the end of the coroutine body to notify
   // it that we've reached the end of the sequence.
-  YieldAwaiter final_suspend() noexcept {
+  auto final_suspend() noexcept {
     value = nullptr;
     return Yield();
   }
@@ -111,7 +122,7 @@ struct AsyncGenerator<T>::Promise {
 
   // Resume execution of the parent to notify it that a new value is available,
   // and then wait for the parent to request a new value.
-  YieldAwaiter yield_value(T& new_value) {
+  auto yield_value(T& new_value) {
     value = &new_value;
     return Yield();
   }
@@ -121,7 +132,7 @@ struct AsyncGenerator<T>::Promise {
   // Any T&& temporaries created as a result of implicit conversion are created
   // by the calling coroutine and will be kept alive across the suspension
   // point.
-  YieldAwaiter yield_value(T&& new_value) {
+  auto yield_value(T&& new_value) {
     value = &new_value;
     return Yield();
   }
@@ -129,6 +140,25 @@ struct AsyncGenerator<T>::Promise {
 
 template <typename T>
 traits::HasAwaitResult<T*> auto AsyncGenerator<T>::operator()() {
+  // Resumes execution of the coroutine body to produce the next value of the
+  // sequence.
+  struct AdvanceAwaiter : std::suspend_always {
+    AsyncGenerator<T>* generator;
+
+    std::coroutine_handle<> await_suspend(
+        std::coroutine_handle<> parent) noexcept {
+      generator->promise().parent = parent;
+      return generator->handle_.get();
+    }
+
+    T* await_resume() {
+      auto& promise = generator->promise();
+      if (promise.exception) {
+        std::rethrow_exception(promise.exception);
+      }
+      return promise.value;
+    }
+  };
   return AdvanceAwaiter{.generator = this};
 }
 
@@ -144,43 +174,7 @@ auto AsyncGenerator<T>::Map(
   }(std::move(*this), std::move(f), std::move(args)...);
 }
 
-// Awaitable created in the parent coroutine that context switches into the
-// generator coroutine's body.
-template <typename T>
-struct AsyncGenerator<T>::AdvanceAwaiter : std::suspend_always {
-  AsyncGenerator<T>* generator;
-
-  std::coroutine_handle<> await_suspend(
-      std::coroutine_handle<> parent) noexcept {
-    generator->promise().parent = parent;
-    return generator->handle_.get();
-  }
-
-  T* await_resume() {
-    auto& promise = generator->promise();
-    if (promise.exception) {
-      std::rethrow_exception(promise.exception);
-    }
-    return promise.value;
-  }
-};
-
 template <typename T>
 traits::HasAwaitResult<T*> auto AsyncGenerator<T>::operator co_await() {
   return traits::ToAwaiter((*this)());
 }
-
-// Awaitable created in the generator coroutine that context switches into the
-// parent coroutine's body.
-template <typename T>
-struct AsyncGenerator<T>::YieldAwaiter : std::suspend_always {
-  std::coroutine_handle<> parent;
-
-  std::coroutine_handle<> await_suspend(
-      [[maybe_unused]] std::coroutine_handle<> producer) noexcept {
-    if (parent) {
-      return parent;
-    }
-    return std::noop_coroutine();
-  }
-};
