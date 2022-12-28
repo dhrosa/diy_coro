@@ -115,7 +115,7 @@ struct AsyncGenerator<T>::Promise {
   YieldAwaiter final_suspend() noexcept {
     destroy_value();
     exhausted = true;
-    return YieldAwaiter{std::exchange(this->parent, nullptr)};
+    return YieldAwaiter{.parent = std::exchange(this->parent, nullptr)};
   }
 
   void unhandled_exception() { exception = std::current_exception(); }
@@ -131,13 +131,13 @@ struct AsyncGenerator<T>::Promise {
       new (&storage) T(std::forward<U>(new_value));
       has_value = true;
     }
-    return YieldAwaiter{std::exchange(this->parent, nullptr)};
+    return YieldAwaiter{.parent = std::exchange(this->parent, nullptr)};
   }
 };
 
 template <typename T>
 Task<T*> AsyncGenerator<T>::operator()() {
-  co_return (co_await AdvanceAwaiter{this});
+  co_return (co_await AdvanceAwaiter{.generator = this});
 }
 
 template <typename T>
@@ -155,10 +155,8 @@ auto AsyncGenerator<T>::Map(
 // Awaitable created in the parent coroutine that context switches into the
 // generator coroutine's body.
 template <typename T>
-struct AsyncGenerator<T>::AdvanceAwaiter {
+struct AsyncGenerator<T>::AdvanceAwaiter : std::suspend_always {
   AsyncGenerator<T>* generator;
-
-  bool await_ready() noexcept { return false; }
 
   std::coroutine_handle<> await_suspend(
       std::coroutine_handle<> parent) noexcept {
@@ -180,16 +178,14 @@ struct AsyncGenerator<T>::AdvanceAwaiter {
 
 template <typename T>
 traits::AwaiterType<Task<T*>> AsyncGenerator<T>::operator co_await() {
-  return {(*this)()};
+  return traits::ToAwaiter((*this)());
 }
 
 // Awaitable created in the generator coroutine that context switches into the
 // parent coroutine's body.
 template <typename T>
-struct AsyncGenerator<T>::YieldAwaiter {
+struct AsyncGenerator<T>::YieldAwaiter : std::suspend_always {
   std::coroutine_handle<> parent;
-
-  bool await_ready() noexcept { return false; }
 
   std::coroutine_handle<> await_suspend(
       [[maybe_unused]] std::coroutine_handle<> producer) noexcept {
@@ -198,8 +194,6 @@ struct AsyncGenerator<T>::YieldAwaiter {
     }
     return std::noop_coroutine();
   }
-
-  void await_resume() noexcept {}
 };
 
 template <typename T>

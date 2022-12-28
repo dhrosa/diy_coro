@@ -124,10 +124,8 @@ struct Task<T>::Promise : PromiseBase {
   // Resume execution of parent coroutine that was awaiting this task's
   // completion, if any.
   auto final_suspend() noexcept {
-    struct FinalAwaiter {
+    struct FinalAwaiter : std::suspend_always {
       std::coroutine_handle<> parent;
-
-      bool await_ready() noexcept { return false; }
 
       std::coroutine_handle<> await_suspend(
           [[maybe_unused]] std::coroutine_handle<> task_handle) noexcept {
@@ -136,21 +134,16 @@ struct Task<T>::Promise : PromiseBase {
         }
         return std::noop_coroutine();
       }
-
-      void await_resume() noexcept {}
     };
-    return FinalAwaiter{std::exchange(parent, nullptr)};
+    return FinalAwaiter{.parent = std::exchange(parent, nullptr)};
   }
 };
 
 template <typename T>
 auto Task<T>::operator co_await() && {
-  struct Awaiter {
+  struct Awaiter : std::suspend_always {
     // The child task whose completion is being awaited.
     Task task;
-
-    // Always suspend the parent.
-    bool await_ready() const noexcept { return false; }
 
     // Tell the child task to resume the parent (current task) when it
     // completes. Then context switch into the child task.
@@ -162,7 +155,7 @@ auto Task<T>::operator co_await() && {
     // Child task has completed; return its final value.
     auto await_resume() { return task.promise().ReturnOrThrow(); }
   };
-  return Awaiter{std::move(*this)};
+  return Awaiter{.task = std::move(*this)};
 }
 
 template <typename T>
@@ -191,15 +184,13 @@ T Task<T>::Wait() && {
     // fact that when  an awaiter's await_suspend() is called,  the coroutine is
     // guaranteed to be suspended.
     auto final_suspend() noexcept {
-      struct FinalAwaiter {
+      struct FinalAwaiter : std::suspend_always {
         std::latch& complete;
-        bool await_ready() noexcept { return false; }
         void await_suspend(std::coroutine_handle<>) noexcept {
           complete.count_down();
         }
-        void await_resume() noexcept {}
       };
-      return FinalAwaiter{complete};
+      return FinalAwaiter{.complete = complete};
     }
   };
 
