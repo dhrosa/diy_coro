@@ -22,7 +22,7 @@ diy_cc_test(traits_test AUTO)
 
 diy_cc_library(handle AUTO)
 
-diy_cc_library(task AUTO)
+diy_cc_library(task AUTO LIBRARIES traits)
 diy_cc_test(task_test AUTO)
 
 diy_cc_library(generator AUTO)

@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "diy/coro/handle.h"
+#include "diy/coro/traits.h"
 
 template <typename T = void>
 class Task {
@@ -29,6 +30,13 @@ class Task {
   Task(Task<U> other)
     requires(std::same_as<T, void> && !std::same_as<U, void>)
       : Task(std::move(other).Map([](auto&&) {})) {}
+
+  // Constructs a Task from an arbitrary awaitable object. This is useful for
+  // synchronously calling Task::Wait() on an awaitable in a non-coroutine
+  // context.
+  template <traits::IsAwaitable A>
+  explicit Task(A&& a)
+      : Task([](A a) -> Task<T> { co_return (co_await a); }(std::move(a))) {}
 
   bool done() const noexcept { return handle_->done(); }
 
@@ -54,6 +62,11 @@ class Task {
 
   Handle handle_;
 };
+
+// CTAD guide for inferring the Task type when converting from an arbitrary
+// awaitable.
+template <traits::IsAwaitable A>
+explicit Task(A&& a) -> Task<traits::AwaitResult<A>>;
 
 ////////////////////
 // Implementation //

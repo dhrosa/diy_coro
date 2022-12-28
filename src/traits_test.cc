@@ -3,21 +3,8 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-TEST(TraitsTest, IsCoroutineHandle) {
-  EXPECT_FALSE(traits::IsCoroutineHandle<int>);
-
-  EXPECT_TRUE(traits::IsCoroutineHandle<std::coroutine_handle<>>);
-
-  struct Promise {};
-  EXPECT_TRUE(traits::IsCoroutineHandle<std::coroutine_handle<Promise>>);
-}
-
 TEST(TraitsTest, IsAwaiter) {
-  struct Awaiter {
-    bool await_ready() { return false; }
-    void await_suspend(std::coroutine_handle<>) {}
-    void await_resume(){};
-  };
+  struct Awaiter : std::suspend_always {};
 
   EXPECT_TRUE(traits::IsAwaiter<Awaiter>);
 
@@ -29,11 +16,7 @@ TEST(TraitsTest, IsAwaiter) {
 }
 
 TEST(TraitsTest, IsAwaitable) {
-  struct Awaiter {
-    bool await_ready() { return false; }
-    void await_suspend(std::coroutine_handle<>) {}
-    void await_resume(){};
-  };
+  struct Awaiter : std::suspend_always {};
 
   EXPECT_TRUE(traits::IsAwaitable<Awaiter>);
 
@@ -53,11 +36,7 @@ A operator co_await(FreeFunctionAwaitable<A> a) {
 }
 
 TEST(TraitsTest, AwaiterType) {
-  struct Awaiter {
-    bool await_ready() { return false; }
-    void await_suspend(std::coroutine_handle<>) {}
-    void await_resume(){};
-  };
+  struct Awaiter : std::suspend_always {};
 
   EXPECT_TRUE((std::same_as<traits::AwaiterType<Awaiter>, Awaiter>));
 
@@ -69,4 +48,16 @@ TEST(TraitsTest, AwaiterType) {
       (std::same_as<traits::AwaiterType<MemberFunctionAwaitable>, Awaiter>));
   EXPECT_TRUE((std::same_as<traits::AwaiterType<FreeFunctionAwaitable<Awaiter>>,
                             Awaiter>));
+}
+
+TEST(TraitsTest, AwaitResult) {
+  struct Awaiter : std::suspend_always {
+    int await_resume() { return 0; }
+  };
+  EXPECT_TRUE((std::same_as<traits::AwaitResult<Awaiter>, int>));
+
+  struct Awaitable {
+    Awaiter operator co_await() { return {}; }
+  };
+  EXPECT_TRUE((std::same_as<traits::AwaitResult<Awaitable>, int>));
 }

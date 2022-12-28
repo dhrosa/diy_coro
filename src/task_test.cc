@@ -71,3 +71,14 @@ TEST(TaskTest, MapExtraArguments) {
   auto task = []() -> Task<int> { co_return 1; };
   EXPECT_EQ(task().Map([](int x, int y) { return x + y; }, 2).Wait(), 3);
 }
+
+TEST(TaskTest, ConversionFromAwaitable) {
+  struct Awaitable : std::suspend_never {
+    int await_resume() { return 3; }
+  };
+
+  auto task = Task(Awaitable());
+  static_assert(std::same_as<decltype(task), Task<int>>);
+
+  EXPECT_EQ(std::move(task).Wait(), 3);
+}
