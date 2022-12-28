@@ -11,10 +11,12 @@ AsyncGenerator<int> IotaPublisher() {
   }
 }
 
-TEST(BroadcastTest, NoSubscribers) { Broadcast<int> broadcast; }
+TEST(BroadcastTest, NoSubscribers) {
+  Broadcast<int> broadcast(IotaPublisher());
+}
 
 TEST(BroadcastTest, SingleSubscriber) {
-  Broadcast<int> broadcast;
+  Broadcast<int> broadcast(IotaPublisher());
 
   auto subscriber = broadcast.Subscribe();
 }
