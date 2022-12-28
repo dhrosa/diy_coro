@@ -138,8 +138,8 @@ TEST(AsyncGeneratorTest, NonDefaultConstructibleType) {
   EXPECT_THAT(NextValue(gen), Pointee(Eq(3)));
   EXPECT_EQ(destructor_calls, 2);
 
-  // Generator is exhausted; the third temporary should be destructed, as well
-  // as the value stored internally in the promise.
+  // Generator is exhausted; the third temporary should be destructed. Note that
+  // the promise does not construct any T values .
   EXPECT_EQ(NextValue(gen), nullptr);
-  EXPECT_EQ(destructor_calls, 4);
+  EXPECT_EQ(destructor_calls, 3);
 }

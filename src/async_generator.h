@@ -78,17 +78,15 @@ AsyncGenerator<T>::AsyncGenerator(R&& range)
 
 template <typename T>
 struct AsyncGenerator<T>::Promise {
-  // Prveiously yielded value. We use std::optional so that we can support
-  // non-default-constructible types, and so that we can manually destroy it.
-  std::optional<T> value;
-
+  // Prveiously yielded value. Is nullptr before the first co_yield, and after
+  // the final co_yield. Otherwise this value is only meaningful if we are
+  // currently suspended inside a co_yield statement.
+  T* value = nullptr;
   // Exception thrown by coroutine body, if any.
   std::exception_ptr exception;
   // The parent coroutine (if any) to resume when a new value or when the
   // coroutine body exists.
   std::coroutine_handle<> parent;
-  // Set when the coroutine body exits.
-  bool exhausted = false;
 
   AsyncGenerator<T> get_return_object() {
     return AsyncGenerator<T>(
@@ -97,12 +95,15 @@ struct AsyncGenerator<T>::Promise {
 
   std::suspend_always initial_suspend() { return {}; }
 
+  YieldAwaiter Yield() {
+    return YieldAwaiter{.parent = std::exchange(parent, nullptr)};
+  }
+
   // Resume execution of the parent at the end of the coroutine body to notify
   // it that we've reached the end of the sequence.
   YieldAwaiter final_suspend() noexcept {
-    value.reset();
-    exhausted = true;
-    return YieldAwaiter{.parent = std::exchange(this->parent, nullptr)};
+    value = nullptr;
+    return Yield();
   }
 
   void unhandled_exception() { exception = std::current_exception(); }
@@ -110,10 +111,19 @@ struct AsyncGenerator<T>::Promise {
 
   // Resume execution of the parent to notify it that a new value is available,
   // and then wait for the parent to request a new value.
-  template <std::convertible_to<T> U = T>
-  auto yield_value(U&& new_value) {
-    value = std::forward<U>(new_value);
-    return YieldAwaiter{.parent = std::exchange(this->parent, nullptr)};
+  YieldAwaiter yield_value(T& value) {
+    this->value = &value;
+    return Yield();
+  }
+
+  // Note: Even though this overload directly matches against T&&, it will also
+  // match (const T&), (T), and (U&&), where U is implicitly converitble to T.
+  // Any T&& temporaries created as a result of implicit conversion are created
+  // by the calling coroutine and will be kept alive across the suspension
+  // point.
+  YieldAwaiter yield_value(T&& value) {
+    this->value = &value;
+    return Yield();
   }
 };
 
@@ -151,10 +161,7 @@ struct AsyncGenerator<T>::AdvanceAwaiter : std::suspend_always {
     if (promise.exception) {
       std::rethrow_exception(promise.exception);
     }
-    if (promise.exhausted) {
-      return nullptr;
-    }
-    return promise.value ? &(*promise.value) : nullptr;
+    return promise.value;
   }
 };
 
