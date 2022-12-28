@@ -1,10 +1,10 @@
 #pragma once
 
 #include <optional>
+#include <ranges>
 #include <stdexcept>
 #include <type_traits>
 
-#include "diy/coro/generator.h"
 #include "diy/coro/handle.h"
 #include "diy/coro/traits.h"
 
@@ -26,8 +26,9 @@ class AsyncGenerator {
   using promise_type = Promise;
   using value_type = T;
 
-  // Implicitly convertible from a synchronous Generator
-  AsyncGenerator(Generator<T> sync_generator);
+  // Implicitly convertible from a range.
+  template <std::ranges::range R>
+  AsyncGenerator(R&& range);
 
   // Moveable.
   AsyncGenerator(AsyncGenerator&&) = default;
@@ -57,18 +58,23 @@ class AsyncGenerator {
   Handle handle_;
 };
 
+// CTAD guide for inferring the AsyncGenerator type when converting from a
+// range.
+template <std::ranges::range R>
+AsyncGenerator(R&& range) -> AsyncGenerator<std::ranges::range_value_t<R>>;
+
 ////////////////////
 // Implementation //
 ////////////////////
 
 template <typename T>
-AsyncGenerator<T>::AsyncGenerator(Generator<T> sync_generator) {
-  *this = [](Generator<T> gen) -> AsyncGenerator<T> {
-    for (auto&& val : gen) {
-      co_yield std::move(val);
-    }
-  }(std::move(sync_generator));
-}
+template <std::ranges::range R>
+AsyncGenerator<T>::AsyncGenerator(R&& range)
+    : AsyncGenerator([](R range) -> AsyncGenerator<T> {
+        for (auto&& value : range) {
+          co_yield std::forward<T>(value);
+        }
+      }(std::forward<R>(range))) {}
 
 template <typename T>
 struct AsyncGenerator<T>::Promise {
@@ -171,28 +177,3 @@ struct AsyncGenerator<T>::YieldAwaiter : std::suspend_always {
     return std::noop_coroutine();
   }
 };
-
-template <typename T>
-constexpr bool kIsAsyncGenerator = false;
-
-template <typename T>
-constexpr bool kIsAsyncGenerator<AsyncGenerator<T>> = true;
-
-template <typename T>
-concept IsAsyncGenerator = kIsAsyncGenerator<T>;
-
-template <typename Producer, typename Consumer>
-concept Chainable =
-    (kIsAsyncGenerator<Producer> || kIsSyncGenerator<Producer>) &&
-    requires(Producer producer, Consumer consumer) {
-      {
-        consumer(std::declval<AsyncGenerator<typename Producer::value_type>>())
-      } -> IsAsyncGenerator;
-    };
-
-template <typename P, typename C>
-auto operator|(P&& p, C&& c)
-  requires Chainable<P, C>
-{
-  return c(std::move(p));
-}

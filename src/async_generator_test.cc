@@ -3,6 +3,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include "diy/coro/generator.h"
 #include "diy/coro/task.h"
 
 using testing::ElementsAre;
@@ -51,6 +52,20 @@ TEST(AsyncGeneratorTest, PropagatesExceptions) {
   EXPECT_THROW(NextValue(gen), std::invalid_argument);
 }
 
+TEST(AsyncGeneratorTest, FromVector) {
+  EXPECT_THAT(ToVector(AsyncGenerator(std::vector<int>({1, 2, 3}))),
+              ElementsAre(1, 2, 3));
+}
+
+TEST(AsyncGeneratorTest, FromSyncGenerator) {
+  auto gen = []() -> Generator<int> {
+    co_yield 1;
+    co_yield 2;
+    co_yield 3;
+  };
+  EXPECT_THAT(ToVector(AsyncGenerator(gen())), ElementsAre(1, 2, 3));
+}
+
 TEST(AsyncGeneratorTest, Nested) {
   auto gen_a = []() -> AsyncGenerator<int> {
     co_yield 1;
@@ -65,38 +80,6 @@ TEST(AsyncGeneratorTest, Nested) {
   };
 
   EXPECT_THAT(ToVector(gen_b(gen_a())), ElementsAre(2, 4, 6));
-}
-
-TEST(AsyncGeneratorTest, ChainAsyncToAsync) {
-  auto gen_a = []() -> AsyncGenerator<int> {
-    co_yield 1;
-    co_yield 2;
-    co_yield 3;
-  };
-
-  auto gen_b = [](AsyncGenerator<int> values) -> AsyncGenerator<int> {
-    while (int* value = co_await values) {
-      co_yield *value * 2;
-    }
-  };
-
-  EXPECT_THAT(ToVector(gen_a() | gen_b), ElementsAre(2, 4, 6));
-}
-
-TEST(AsyncGeneratorTest, ChainSyncToAsync) {
-  auto gen_a = []() -> Generator<int> {
-    co_yield 1;
-    co_yield 2;
-    co_yield 3;
-  };
-
-  auto gen_b = [](AsyncGenerator<int> values) -> AsyncGenerator<int> {
-    while (int* value = co_await values) {
-      co_yield *value * 2;
-    }
-  };
-
-  EXPECT_THAT(ToVector(gen_a() | gen_b), ElementsAre(2, 4, 6));
 }
 
 TEST(AsyncGeneratorTest, Map) {
