@@ -6,7 +6,6 @@
 
 #include "diy/coro/generator.h"
 #include "diy/coro/handle.h"
-#include "diy/coro/task.h"
 #include "diy/coro/traits.h"
 
 // Coroutine type for asynchronously producing a sequence of values of unknown
@@ -34,13 +33,13 @@ class AsyncGenerator {
   AsyncGenerator(AsyncGenerator&&) = default;
   AsyncGenerator& operator=(AsyncGenerator&&) = default;
 
-  // Attempts to produce the next value in the sequence. Returns nullptr if
-  // there are no more values, or returns the next value. Any exceptions raised
-  // raised by the generator body are raised here.
-  Task<T*> operator()();
+  // Awaitable that attempts to produce the next value in the sequence. Returns
+  // nullptr if there are no more values, or returns the next value. Any
+  // exceptions raised raised by the generator body are raised here.
+  traits::HasAwaitResult<T*> auto operator()();
 
   // Makes AsyncGneerator awaitable as if by awaiting on operator().
-  traits::AwaiterType<Task<T*>> operator co_await();
+  traits::HasAwaitResult<T*> auto operator co_await();
 
   // Creates a new AsyncGenerator whose values are the result of applying `f` to
   // each value of the current generator.
@@ -113,8 +112,8 @@ struct AsyncGenerator<T>::Promise {
 };
 
 template <typename T>
-Task<T*> AsyncGenerator<T>::operator()() {
-  co_return (co_await AdvanceAwaiter{.generator = this});
+traits::HasAwaitResult<T*> auto AsyncGenerator<T>::operator()() {
+  return AdvanceAwaiter{.generator = this};
 }
 
 template <typename T>
@@ -154,7 +153,7 @@ struct AsyncGenerator<T>::AdvanceAwaiter : std::suspend_always {
 };
 
 template <typename T>
-traits::AwaiterType<Task<T*>> AsyncGenerator<T>::operator co_await() {
+traits::HasAwaitResult<T*> auto AsyncGenerator<T>::operator co_await() {
   return traits::ToAwaiter((*this)());
 }
 

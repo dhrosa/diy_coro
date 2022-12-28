@@ -69,4 +69,8 @@ using AwaiterType = decltype(ToAwaiter(std::declval<T>()));
 template <IsAwaitable T>
 using AwaitResult = decltype(std::declval<AwaiterType<T>>().await_resume());
 
+// Satisfied if awaiting on A results in a value of type T.
+template <typename A, typename T>
+concept HasAwaitResult = IsAwaitable<A> && std::same_as<AwaitResult<A>, T>;
+
 }  // namespace traits

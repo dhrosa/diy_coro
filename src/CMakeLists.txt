@@ -28,11 +28,11 @@ diy_cc_test(task_test AUTO)
 diy_cc_library(generator AUTO)
 diy_cc_test(generator_test AUTO)
 
-diy_cc_library(async_generator AUTO LIBRARIES handle task generator)
-diy_cc_test(async_generator_test AUTO)
+diy_cc_library(async_generator AUTO LIBRARIES handle generator)
+diy_cc_test(async_generator_test AUTO LIBRARIES task)
 
 diy_cc_library(executor AUTO LIBRARIES absl::synchronization absl::time)
-diy_cc_test(executor_test AUTO task)
+diy_cc_test(executor_test AUTO LIBRARIES task)
 
 diy_cc_library(broadcast AUTO LIBRARIES async_generator absl::flat_hash_set)
 diy_cc_test(broadcast_test AUTO LIBRARIES task)

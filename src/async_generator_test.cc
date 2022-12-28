@@ -3,6 +3,8 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include "diy/coro/task.h"
+
 using testing::ElementsAre;
 using testing::Eq;
 using testing::Pointee;

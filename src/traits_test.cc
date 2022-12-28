@@ -3,28 +3,30 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+namespace traits {
+
 TEST(TraitsTest, IsAwaiter) {
   struct Awaiter : std::suspend_always {};
 
-  EXPECT_TRUE(traits::IsAwaiter<Awaiter>);
+  EXPECT_TRUE(IsAwaiter<Awaiter>);
 
   struct Awaitable {
     Awaiter operator co_await() { return Awaiter{}; }
   };
 
-  EXPECT_FALSE(traits::IsAwaiter<Awaitable>);
+  EXPECT_FALSE(IsAwaiter<Awaitable>);
 }
 
 TEST(TraitsTest, IsAwaitable) {
   struct Awaiter : std::suspend_always {};
 
-  EXPECT_TRUE(traits::IsAwaitable<Awaiter>);
+  EXPECT_TRUE(IsAwaitable<Awaiter>);
 
   struct Awaitable {
     Awaiter operator co_await() { return Awaiter{}; }
   };
 
-  EXPECT_TRUE(traits::IsAwaitable<Awaitable>);
+  EXPECT_TRUE(IsAwaitable<Awaitable>);
 }
 
 template <typename A>
@@ -38,26 +40,39 @@ A operator co_await(FreeFunctionAwaitable<A> a) {
 TEST(TraitsTest, AwaiterType) {
   struct Awaiter : std::suspend_always {};
 
-  EXPECT_TRUE((std::same_as<traits::AwaiterType<Awaiter>, Awaiter>));
+  EXPECT_TRUE((std::same_as<AwaiterType<Awaiter>, Awaiter>));
 
   struct MemberFunctionAwaitable {
     Awaiter operator co_await() { return Awaiter{}; }
   };
 
+  EXPECT_TRUE((std::same_as<AwaiterType<MemberFunctionAwaitable>, Awaiter>));
   EXPECT_TRUE(
-      (std::same_as<traits::AwaiterType<MemberFunctionAwaitable>, Awaiter>));
-  EXPECT_TRUE((std::same_as<traits::AwaiterType<FreeFunctionAwaitable<Awaiter>>,
-                            Awaiter>));
+      (std::same_as<AwaiterType<FreeFunctionAwaitable<Awaiter>>, Awaiter>));
 }
 
 TEST(TraitsTest, AwaitResult) {
   struct Awaiter : std::suspend_always {
     int await_resume() { return 0; }
   };
-  EXPECT_TRUE((std::same_as<traits::AwaitResult<Awaiter>, int>));
+  EXPECT_TRUE((std::same_as<AwaitResult<Awaiter>, int>));
 
   struct Awaitable {
     Awaiter operator co_await() { return {}; }
   };
-  EXPECT_TRUE((std::same_as<traits::AwaitResult<Awaitable>, int>));
+  EXPECT_TRUE((std::same_as<AwaitResult<Awaitable>, int>));
 }
+
+TEST(TraitsTest, HasAwaitResult) {
+  struct Awaiter : std::suspend_always {
+    int await_resume() { return 0; }
+  };
+  EXPECT_TRUE((HasAwaitResult<Awaiter, int>));
+
+  struct Awaitable {
+    Awaiter operator co_await() { return {}; }
+  };
+  EXPECT_TRUE((HasAwaitResult<Awaitable, int>));
+}
+
+}  // namespace traits
