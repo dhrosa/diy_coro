@@ -7,18 +7,26 @@ using testing::ElementsAre;
 using testing::Eq;
 using testing::Pointee;
 
-TEST(AsyncGeneratorTest, Empty) {
-  auto gen = []() -> AsyncGenerator<int> { co_return; }();
-  EXPECT_THAT(gen().Wait(), testing::IsNull());
+template <typename T>
+std::vector<T> ToVector(AsyncGenerator<T> gen) {
+  return [](AsyncGenerator<T> gen) -> Task<std::vector<T>> {
+    std::vector<T> out;
+    while (T* value = co_await gen) {
+      out.emplace_back(std::move(*value));
+    }
+    co_return out;
+  }(std::move(gen))
+                                          .Wait();
 }
 
 template <typename T>
-Task<std::vector<T>> Materialize(AsyncGenerator<T> gen) {
-  std::vector<T> out;
-  while (T* value = co_await gen) {
-    out.emplace_back(std::move(*value));
-  }
-  co_return out;
+T* NextValue(AsyncGenerator<T>& gen) {
+  return Task(gen).Wait();
+}
+
+TEST(AsyncGeneratorTest, Empty) {
+  auto gen = []() -> AsyncGenerator<int> { co_return; };
+  EXPECT_THAT(ToVector(gen()), testing::IsEmpty());
 }
 
 TEST(AsyncGeneratorTest, Finite) {
@@ -28,7 +36,7 @@ TEST(AsyncGeneratorTest, Finite) {
     co_yield 3;
   };
 
-  EXPECT_THAT(Materialize(gen()).Wait(), ElementsAre(1, 2, 3));
+  EXPECT_THAT(ToVector(gen()), ElementsAre(1, 2, 3));
 }
 
 TEST(AsyncGeneratorTest, PropagatesExceptions) {
@@ -37,8 +45,8 @@ TEST(AsyncGeneratorTest, PropagatesExceptions) {
     throw std::invalid_argument("some error");
   }();
 
-  EXPECT_THAT(gen().Wait(), Pointee(Eq(1)));
-  EXPECT_THROW(gen().Wait(), std::invalid_argument);
+  EXPECT_THAT(NextValue(gen), Pointee(Eq(1)));
+  EXPECT_THROW(NextValue(gen), std::invalid_argument);
 }
 
 TEST(AsyncGeneratorTest, Nested) {
@@ -54,7 +62,7 @@ TEST(AsyncGeneratorTest, Nested) {
     }
   };
 
-  EXPECT_THAT(Materialize(gen_b(gen_a())).Wait(), ElementsAre(2, 4, 6));
+  EXPECT_THAT(ToVector(gen_b(gen_a())), ElementsAre(2, 4, 6));
 }
 
 TEST(AsyncGeneratorTest, ChainAsyncToAsync) {
@@ -70,7 +78,7 @@ TEST(AsyncGeneratorTest, ChainAsyncToAsync) {
     }
   };
 
-  EXPECT_THAT(Materialize(gen_a() | gen_b).Wait(), ElementsAre(2, 4, 6));
+  EXPECT_THAT(ToVector(gen_a() | gen_b), ElementsAre(2, 4, 6));
 }
 
 TEST(AsyncGeneratorTest, ChainSyncToAsync) {
@@ -86,7 +94,7 @@ TEST(AsyncGeneratorTest, ChainSyncToAsync) {
     }
   };
 
-  EXPECT_THAT(Materialize(gen_a() | gen_b).Wait(), ElementsAre(2, 4, 6));
+  EXPECT_THAT(ToVector(gen_a() | gen_b), ElementsAre(2, 4, 6));
 }
 
 TEST(AsyncGeneratorTest, Map) {
@@ -96,7 +104,7 @@ TEST(AsyncGeneratorTest, Map) {
     co_yield 3;
   };
 
-  EXPECT_THAT(Materialize(gen_a().Map([](int x) { return x * 2; })).Wait(),
+  EXPECT_THAT(ToVector(gen_a().Map([](int x) { return x * 2; })),
               ElementsAre(2, 4, 6));
 }
 
@@ -107,9 +115,8 @@ TEST(AsyncGeneratorTest, MapWithExtraArguments) {
     co_yield 3;
   };
 
-  EXPECT_THAT(
-      Materialize(gen_a().Map([](int x, int y) { return x * y; }, 2)).Wait(),
-      ElementsAre(2, 4, 6));
+  EXPECT_THAT(ToVector(gen_a().Map([](int x, int y) { return x * y; }, 2)),
+              ElementsAre(2, 4, 6));
 }
 
 TEST(AsyncGeneratorTest, NonDefaultConstructibleType) {
@@ -135,19 +142,19 @@ TEST(AsyncGeneratorTest, NonDefaultConstructibleType) {
 
   // The coroutine is suspended in the middle of co_yield; so the first
   // temporary should not be destructed yet.
-  EXPECT_THAT(gen().Wait(), Pointee(Eq(1)));
+  EXPECT_THAT(NextValue(gen), Pointee(Eq(1)));
   EXPECT_EQ(destructor_calls, 0);
 
   // First temporary destructed; second temporary in-flight.
-  EXPECT_THAT(gen().Wait(), Pointee(Eq(2)));
+  EXPECT_THAT(NextValue(gen), Pointee(Eq(2)));
   EXPECT_EQ(destructor_calls, 1);
 
   // Second temporary destructed; third temporary in-flight.
-  EXPECT_THAT(gen().Wait(), Pointee(Eq(3)));
+  EXPECT_THAT(NextValue(gen), Pointee(Eq(3)));
   EXPECT_EQ(destructor_calls, 2);
 
   // Generator is exhausted; the third temporary should be destructed, as well
   // as the value stored internally in the promise.
-  EXPECT_EQ(gen().Wait(), nullptr);
+  EXPECT_EQ(NextValue(gen), nullptr);
   EXPECT_EQ(destructor_calls, 4);
 }

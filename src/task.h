@@ -36,7 +36,9 @@ class Task {
   // context.
   template <traits::IsAwaitable A>
   explicit Task(A&& a)
-      : Task([](A a) -> Task<T> { co_return (co_await a); }(std::move(a))) {}
+      : Task([](traits::AwaiterType<A> a) -> Task<T> {
+          co_return (co_await a);
+        }(traits::ToAwaiter(a))) {}
 
   bool done() const noexcept { return handle_->done(); }
 
