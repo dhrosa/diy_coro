@@ -37,6 +37,9 @@ diy_cc_test(executor_test AUTO task)
 diy_cc_library(broadcast AUTO LIBRARIES async_generator absl::flat_hash_set)
 diy_cc_test(broadcast_test AUTO LIBRARIES task)
 
+diy_cc_library(event AUTO LIBRARIES absl::synchronization)
+diy_cc_test(event_test AUTO LIBRARIES task)
+
 # Top-level target for public consumption.
 add_library(diy_coro INTERFACE)
 target_link_libraries(diy_coro INTERFACE traits handle task generator
