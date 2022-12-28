@@ -78,7 +78,7 @@ AsyncGenerator<T>::AsyncGenerator(R&& range)
 
 template <typename T>
 struct AsyncGenerator<T>::Promise {
-  // Prveiously yielded value. Is nullptr before the first co_yield, and after
+  // Previously yielded value. Is nullptr before the first co_yield, and after
   // the final co_yield. Otherwise this value is only meaningful if we are
   // currently suspended inside a co_yield statement.
   T* value = nullptr;
@@ -111,8 +111,8 @@ struct AsyncGenerator<T>::Promise {
 
   // Resume execution of the parent to notify it that a new value is available,
   // and then wait for the parent to request a new value.
-  YieldAwaiter yield_value(T& value) {
-    this->value = &value;
+  YieldAwaiter yield_value(T& new_value) {
+    value = &new_value;
     return Yield();
   }
 
@@ -121,8 +121,8 @@ struct AsyncGenerator<T>::Promise {
   // Any T&& temporaries created as a result of implicit conversion are created
   // by the calling coroutine and will be kept alive across the suspension
   // point.
-  YieldAwaiter yield_value(T&& value) {
-    this->value = &value;
+  YieldAwaiter yield_value(T&& new_value) {
+    value = &new_value;
     return Yield();
   }
 };
