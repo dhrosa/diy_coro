@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cassert>
 #include <optional>
 #include <ranges>
 #include <stdexcept>
@@ -34,6 +35,11 @@ class AsyncGenerator {
   AsyncGenerator(AsyncGenerator&&) = default;
   AsyncGenerator& operator=(AsyncGenerator&&) = default;
 
+  // Resumes the coroutine until it hands control back to the caller after its
+  // first suspension. Calling this method after calling any other methods of
+  // this coroutine is undefined behavior.
+  void WaitForFirstSuspension() { handle_-> resume(); }
+  
   // Awaitable that attempts to produce the next value in the sequence. Returns
   // nullptr if there are no more values, or returns the next value. Any
   // exceptions raised raised by the generator body are raised here.
@@ -75,10 +81,11 @@ AsyncGenerator<T>::AsyncGenerator(R&& range)
 
 template <typename T>
 struct AsyncGenerator<T>::Promise {
-  // Previously yielded value. Is nullptr before the first co_yield, and after
-  // the final co_yield. Otherwise this value is only meaningful if we are
-  // currently suspended inside a co_yield statement.
+  // Value currently being yielded by the coroutine body. This is set during
+  // co_yield and reset during co_await.
   T* value = nullptr;
+  // Signalled when the coroutine body has exited.
+  bool exhausted = false;
   // Exception thrown by coroutine body, if any.
   std::exception_ptr exception;
   // The parent coroutine (if any) to resume when a new value or when the
@@ -113,7 +120,7 @@ struct AsyncGenerator<T>::Promise {
   // Resume execution of the parent at the end of the coroutine body to notify
   // it that we've reached the end of the sequence.
   auto final_suspend() noexcept {
-    value = nullptr;
+    exhausted = true;
     return Yield();
   }
 
@@ -142,8 +149,13 @@ template <typename T>
 traits::HasAwaitResult<T*> auto AsyncGenerator<T>::operator()() {
   // Resumes execution of the coroutine body to produce the next value of the
   // sequence.
-  struct AdvanceAwaiter : std::suspend_always {
+  struct AdvanceAwaiter {
     AsyncGenerator<T>* generator;
+
+    bool await_ready() {
+      Promise& promise = generator->promise();
+      return promise.exhausted || promise.exception || promise.value;
+    }
 
     std::coroutine_handle<> await_suspend(
         std::coroutine_handle<> parent) noexcept {
@@ -156,7 +168,10 @@ traits::HasAwaitResult<T*> auto AsyncGenerator<T>::operator()() {
       if (promise.exception) {
         std::rethrow_exception(promise.exception);
       }
-      return promise.value;
+      if (promise.exhausted) {
+        return nullptr;
+      }
+      return std::exchange(promise.value, nullptr);
     }
   };
   return AdvanceAwaiter{.generator = this};

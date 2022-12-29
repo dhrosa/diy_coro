@@ -52,6 +52,18 @@ TEST(AsyncGeneratorTest, PropagatesExceptions) {
   EXPECT_THROW(NextValue(gen), std::invalid_argument);
 }
 
+TEST(AsyncGeneratorTest, WaitForFirstSuspension) {
+  bool called = false;
+  auto gen = [](bool& called) -> AsyncGenerator<int> {
+    called = true;
+    co_yield 1;
+  }(called);
+  EXPECT_FALSE(called);
+  gen.WaitForFirstSuspension();
+  EXPECT_TRUE(called);
+  EXPECT_THAT(ToVector(std::move(gen)), ElementsAre(1));
+}
+
 TEST(AsyncGeneratorTest, FromVector) {
   EXPECT_THAT(ToVector(AsyncGenerator(std::vector<int>({1, 2, 3}))),
               ElementsAre(1, 2, 3));
