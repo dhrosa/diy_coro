@@ -40,8 +40,11 @@ class Task {
           co_return (co_await a);
         }(traits::ToAwaiter(a))) {}
 
-  bool done() const noexcept { return handle_->done(); }
-
+  // Resumes the coroutine until it hands control back to the caller after its
+  // first suspension. Calling this method after calling any other methods of
+  // this coroutine is undefined behavior.
+  void WaitForFirstSuspension() { handle_-> resume(); }
+  
   // Creates an awaitable object that awaits the completion of this task.
   auto operator co_await() &&;
 
@@ -143,10 +146,14 @@ struct Task<T>::Promise : PromiseBase {
 
 template <typename T>
 auto Task<T>::operator co_await() && {
-  struct Awaiter : std::suspend_always {
+  struct Awaiter {
     // The child task whose completion is being awaited.
     Task task;
 
+    bool await_ready() {
+      return task.handle_->done();
+    }
+    
     // Tell the child task to resume the parent (current task) when it
     // completes. Then context switch into the child task.
     std::coroutine_handle<> await_suspend(std::coroutine_handle<> parent) {

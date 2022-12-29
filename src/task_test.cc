@@ -25,6 +25,19 @@ TEST(TaskTest, ReturnVoid) {
   EXPECT_TRUE(called);
 }
 
+
+TEST(TaskTest, WaitForFirstSuspension) {
+  bool body_started = false;
+  auto task = [](bool& body_started) -> Task<int> {
+    body_started = true;
+    co_return 1;
+  }(body_started);
+  EXPECT_FALSE(body_started);
+  task.WaitForFirstSuspension();
+  EXPECT_TRUE(body_started);
+  EXPECT_EQ(std::move(task).Wait(), 1);
+}
+
 TEST(TaskTest, ChainValues) {
   auto task_a = []() -> Task<int> { co_return 1; };
   auto task_b = [](Task<int> a) -> Task<int> {

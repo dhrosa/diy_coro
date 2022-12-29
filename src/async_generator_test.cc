@@ -53,14 +53,14 @@ TEST(AsyncGeneratorTest, PropagatesExceptions) {
 }
 
 TEST(AsyncGeneratorTest, WaitForFirstSuspension) {
-  bool called = false;
-  auto gen = [](bool& called) -> AsyncGenerator<int> {
-    called = true;
+  bool body_started = false;
+  auto gen = [](bool& body_started) -> AsyncGenerator<int> {
+    body_started = true;
     co_yield 1;
-  }(called);
-  EXPECT_FALSE(called);
+  }(body_started);
+  EXPECT_FALSE(body_started);
   gen.WaitForFirstSuspension();
-  EXPECT_TRUE(called);
+  EXPECT_TRUE(body_started);
   EXPECT_THAT(ToVector(std::move(gen)), ElementsAre(1));
 }
 
