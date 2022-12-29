@@ -44,6 +44,7 @@ class IntrusiveLinkedList<T>::Iterator {
   Iterator() = default;
   T& operator*() const { return *item_; }
   T* operator->() const { return item_; }
+  operator T*() const { return item_; }
 
   // Pre-increment.
   Iterator& operator++() {
