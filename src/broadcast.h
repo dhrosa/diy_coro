@@ -26,18 +26,12 @@ class Broadcast {
  private:
   struct State;
   struct Subscriber;
-
-  struct BeginSendOperation;
-  struct EndSendOperation;
-
-  struct BeginReceiveOperation;
-  struct EndReceiveOperation;
+  struct PhaseTransition;
 
   enum Phase {
     kWaitingForValue,
     kReceivedValue,
   };
-
   State state_;
 };
 
@@ -45,113 +39,75 @@ template <typename T>
 struct Broadcast<T>::State {
   AsyncGenerator<T> publisher;
   IntrusiveLinkedList<Subscriber> subscribers;
-  std::coroutine_handle<> waiting_sender;
+  Phase desired_phase;
+  std::coroutine_handle<> waiting_publisher;
   const T* value = nullptr;
 
-  AsyncGenerator<std::reference_wrapper<const T>> Subscribe();
+  bool PhaseTransitionComplete() const {
+    return std::ranges::all_of(
+        subscribers, [&](Subscriber& s) { return s.phase == desired_phase; });
+  }
 
-  std::coroutine_handle<> NextWaitingConsumer(Phase phase) {
+  std::coroutine_handle<> NextUntransitionedConsumer() {
     Subscriber* s = std::ranges::find_if(subscribers, [&](Subscriber& s) {
-      return s.phase == phase && s.waiting_consumer != nullptr;
+      return s.phase != desired_phase && s.waiting != nullptr;
     });
     if (s == nullptr) {
       return std::noop_coroutine();
     }
-    return std::exchange(s->waiting_consumer, nullptr);
+    return std::exchange(s->waiting, nullptr);
   }
+
+  AsyncGenerator<std::reference_wrapper<const T>> Subscribe();
 };
 
 template <typename T>
 struct Broadcast<T>::Subscriber {
   State& state;
   Subscriber* next = nullptr;
-  std::coroutine_handle<> waiting_consumer;
+  std::coroutine_handle<> waiting;
   Phase phase = kReceivedValue;
 };
 
+// Awaitable that waits for all subscribers to reach the desired state.
 template <typename T>
-struct Broadcast<T>::BeginSendOperation : std::suspend_always {
+struct Broadcast<T>::PhaseTransition : std::suspend_always {
   State& state;
 
-  bool await_ready() {
-    return std::ranges::all_of(state.subscribers, [](Subscriber& s) {
-      return s.phase == kWaitingForValue;
-    });
-  }
+  // Null if the parent coroutine is the sender, othewise the subsriber
+  // corresponding to the parent coroutine.
+  Subscriber* subscriber = nullptr;
+
+  bool await_ready() { return state.PhaseTransitionComplete(); }
 
   std::coroutine_handle<> await_suspend(std::coroutine_handle<> handle) {
-    state.waiting_sender = handle;
-    return state.NextWaitingConsumer(kReceivedValue);
-  }
-};
-
-template <typename T>
-struct Broadcast<T>::EndSendOperation : std::suspend_always {
-  State& state;
-
-  bool await_ready() {
-    return std::ranges::all_of(state.subscribers, [](Subscriber& s) {
-      return s.phase == kReceivedValue;
-    });
-  }
-
-  std::coroutine_handle<> await_suspend(std::coroutine_handle<> handle) {
-    state.waiting_sender = handle;
-    return state.NextWaitingConsumer(kWaitingForValue);
-  }
-};
-
-template <typename T>
-struct Broadcast<T>::BeginReceiveOperation : std::suspend_always {
-  Subscriber& subscriber;
-  State& state = subscriber.state;
-
-  bool await_ready() {
-    return std::ranges::all_of(state.subscribers, [](Subscriber& s) {
-      return s.phase == kWaitingForValue;
-    });
-  }
-
-  std::coroutine_handle<> await_suspend(std::coroutine_handle<> handle) {
-    state.waiting_sender = handle;
-    return state.NextWaitingConsumer(kReceivedValue);
-  }
-
-  void await_resume() {
-    if (state.waiting_sender && await_ready()) {
-      state.waiting_sender.resume();
+    if (subscriber == nullptr) {
+      state.waiting_publisher = handle;
+    } else {
+      subscriber->waiting = handle;
     }
-  }
-};
-
-template <typename T>
-struct Broadcast<T>::EndReceiveOperation : std::suspend_always {
-  Subscriber& subscriber;
-  State& state = subscriber.state;
-
-  bool await_ready() {
-    return std::ranges::all_of(state.subscribers, [](Subscriber& s) {
-      return s.phase == kWaitingForValue;
-    });
-  }
-
-  std::coroutine_handle<> await_suspend(std::coroutine_handle<> handle) {
-    state.waiting_sender = handle;
-    return state.NextWaitingConsumer(kWaitingForValue);
+    return state.NextUntransitionedConsumer();
   }
 
   void await_resume() {
-    if (state.waiting_sender && await_ready()) {
-      state.waiting_sender.resume();
+    if (subscriber == nullptr) {
+      return;
+    }
+    if (state.waiting_publisher && state.PhaseTransitionComplete()) {
+      // We’re the final subscriber to transition states; resume the publisher.
+      std::exchange(state.waiting_publisher, nullptr).resume();
     }
   }
 };
 
 template <typename T>
 Task<> Broadcast<T>::Send(const T& value) {
-  co_await BeginSendOperation{state_};
+  PhaseTransition transition{.state = state_};
+  state_.desired_subscriber_phase = kWaitingForValue;
+  co_await transition;
   state_.value = &value;
-  co_await EndSendOperation{state_};
+  state_.desired_subscriber_phase = kReceivedValue;
+  co_await transition;
 }
 
 template <typename T>
@@ -159,14 +115,14 @@ AsyncGenerator<std::reference_wrapper<const T>>
 Broadcast<T>::State::Subscribe() {
   Subscriber subscriber{.state = *this};
   subscribers.push_back(subscriber);
+  PhaseTransition transition{.state = *this, .subscriber = &subscriber};
   while (true) {
     subscriber.phase = kWaitingForValue;
-    co_await BeginReceiveOperation{.subscriber = subscriber};
+    co_await transition;
     co_yield std::cref(*value);
     subscriber.phase = kReceivedValue;
-    co_await EndReceiveOperation{.subscriber = subscriber};
-  };
-  co_return;
+    co_await transition;
+  }
 }
 
 template <typename T>
