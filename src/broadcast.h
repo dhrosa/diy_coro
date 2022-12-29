@@ -75,7 +75,13 @@ struct Broadcast<T>::State {
       State& state;
       Subscriber* subscriber = nullptr;
 
-      bool await_ready() { return state.AllSubscribersInDesiredPhase(); }
+      bool await_ready() {
+        if (subscriber == nullptr && state.subscribers.empty()) {
+          // Publishing wihtout any subscribers; nothing to do.
+          return true;
+        }
+        return state.AllSubscribersInDesiredPhase();
+      }
 
       std::coroutine_handle<> await_suspend(std::coroutine_handle<> handle) {
         if (subscriber == nullptr) {
@@ -105,10 +111,10 @@ struct Broadcast<T>::State {
 
 template <typename T>
 Task<> Broadcast<T>::Send(const T& value) {
-  state_.desired_subscriber_phase = kWaitingForValue;
+  state_.desired_phase = kWaitingForValue;
   co_await state_.PhaseTransitionComplete();
   state_.value = &value;
-  state_.desired_subscriber_phase = kReceivedValue;
+  state_.desired_phase = kReceivedValue;
   co_await state_.PhaseTransitionComplete();
 }
 
