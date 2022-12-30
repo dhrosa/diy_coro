@@ -7,6 +7,7 @@
 #include <type_traits>
 
 #include "diy/coro/handle.h"
+#include "diy/coro/resume.h"
 #include "diy/coro/traits.h"
 
 // Coroutine type for asynchronously producing a sequence of values of unknown
@@ -103,21 +104,7 @@ struct AsyncGenerator<T>::Promise {
 
   // Awaitable created in the generator coroutine that context switches into the
   // parent coroutine's body.
-  auto Yield() {
-    struct YieldAwaiter : std::suspend_always {
-      std::coroutine_handle<> parent;
-
-      std::coroutine_handle<> await_suspend(
-          [[maybe_unused]] std::coroutine_handle<> producer) noexcept {
-        if (parent) {
-          return parent;
-        }
-        return std::noop_coroutine();
-      }
-    };
-
-    return YieldAwaiter{.parent = std::exchange(parent, nullptr)};
-  }
+  auto Yield() { return ::Resume(std::exchange(parent, nullptr)); }
 
   // Resume execution of the parent at the end of the coroutine body to notify
   // it that we've reached the end of the sequence.

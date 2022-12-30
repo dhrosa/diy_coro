@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "diy/coro/handle.h"
+#include "diy/coro/resume.h"
 #include "diy/coro/traits.h"
 
 template <typename T = void>
@@ -131,18 +132,7 @@ struct Task<T>::Promise : PromiseBase {
   // Resume execution of parent coroutine that was awaiting this task's
   // completion, if any.
   auto final_suspend() noexcept {
-    struct FinalAwaiter : std::suspend_always {
-      std::coroutine_handle<> parent;
-
-      std::coroutine_handle<> await_suspend(
-          [[maybe_unused]] std::coroutine_handle<> task_handle) noexcept {
-        if (parent) {
-          return parent;
-        }
-        return std::noop_coroutine();
-      }
-    };
-    return FinalAwaiter{.parent = std::exchange(parent, nullptr)};
+    return ::Resume(std::exchange(parent, nullptr));
   }
 };
 
