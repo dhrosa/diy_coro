@@ -1,9 +1,11 @@
 #pragma once
 
-#include <absl/container/flat_hash_set.h>
+#include <absl/container/flat_hash_map.h>
+#include <absl/log/log.h>
+#include <absl/synchronization/mutex.h>
 
+#include <atomic>
 #include <coroutine>
-#include <functional>
 #include <iterator>
 #include <optional>
 #include <ranges>
@@ -19,9 +21,9 @@ template <typename T>
 class Broadcast {
  public:
   Broadcast(AsyncGenerator<T>&& publisher) : state_(std::move(publisher)) {}
-  AsyncGenerator<std::reference_wrapper<const T>> Subscribe();
+  AsyncGenerator<const T> Subscribe();
 
-  Task<> Send(const T& value);
+  Task<> Publish(const T& value);
 
  private:
   struct State;
@@ -39,7 +41,6 @@ struct Broadcast<T>::Subscriber {
   State& state;
   Subscriber* next = nullptr;
   std::coroutine_handle<> waiting;
-  Phase phase = kReceivedValue;
 };
 
 template <typename T>
@@ -47,22 +48,22 @@ struct Broadcast<T>::State {
   AsyncGenerator<T> publisher;
   IntrusiveLinkedList<Subscriber> subscribers;
   Phase desired_phase;
+  absl::flat_hash_map<Subscriber*, Phase> subscriber_phases;
   std::coroutine_handle<> waiting_publisher;
   const T* value = nullptr;
 
   bool AllSubscribersInDesiredPhase() const {
-    return std::ranges::all_of(
-        subscribers, [&](Subscriber& s) { return s.phase == desired_phase; });
+    return std::ranges::all_of(std::views::values(subscriber_phases),
+                               [&](Phase p) { return p == desired_phase; });
   }
 
   std::coroutine_handle<> NextUntransitionedHandle() {
-    Subscriber* s = std::ranges::find_if(subscribers, [&](Subscriber& s) {
-      return s.phase != desired_phase && s.waiting != nullptr;
-    });
-    if (s == nullptr) {
-      return std::noop_coroutine();
+    for (auto& [subscriber, phase] : subscriber_phases) {
+      if (phase != desired_phase && subscriber->waiting) {
+        return std::exchange(subscriber->waiting, nullptr);
+      }
     }
-    return std::exchange(s->waiting, nullptr);
+    return std::noop_coroutine();
   }
 
   // Awaitable thats waits for all subscribers to transition to the current
@@ -75,13 +76,7 @@ struct Broadcast<T>::State {
       State& state;
       Subscriber* subscriber = nullptr;
 
-      bool await_ready() {
-        if (subscriber == nullptr && state.subscribers.empty()) {
-          // Publishing wihtout any subscribers; nothing to do.
-          return true;
-        }
-        return state.AllSubscribersInDesiredPhase();
-      }
+      bool await_ready() { return state.AllSubscribersInDesiredPhase(); }
 
       std::coroutine_handle<> await_suspend(std::coroutine_handle<> handle) {
         if (subscriber == nullptr) {
@@ -105,12 +100,10 @@ struct Broadcast<T>::State {
     };
     return Awaiter{.state = *this, .subscriber = subscriber};
   }
-
-  AsyncGenerator<std::reference_wrapper<const T>> Subscribe();
 };
 
 template <typename T>
-Task<> Broadcast<T>::Send(const T& value) {
+Task<> Broadcast<T>::Publish(const T& value) {
   state_.desired_phase = kWaitingForValue;
   co_await state_.PhaseTransitionComplete();
   state_.value = &value;
@@ -119,20 +112,14 @@ Task<> Broadcast<T>::Send(const T& value) {
 }
 
 template <typename T>
-AsyncGenerator<std::reference_wrapper<const T>>
-Broadcast<T>::State::Subscribe() {
-  Subscriber subscriber{.state = *this};
-  subscribers.push_back(subscriber);
+AsyncGenerator<const T> Broadcast<T>::Subscribe() {
+  Subscriber subscriber{.state = state_};
+  state_.subscribers.push_back(subscriber);
   while (true) {
-    subscriber.phase = kWaitingForValue;
-    co_await PhaseTransitionComplete();
-    co_yield std::cref(*value);
-    subscriber.phase = kReceivedValue;
-    co_await PhaseTransitionComplete();
+    state_.subscriber_phases[&subscriber] = kWaitingForValue;
+    co_await state_.PhaseTransitionComplete();
+    co_yield *state_.value;
+    state_.subscriber_phases[&subscriber] = kReceivedValue;
+    co_await state_.PhaseTransitionComplete();
   }
-}
-
-template <typename T>
-AsyncGenerator<std::reference_wrapper<const T>> Broadcast<T>::Subscribe() {
-  return state_.Subscribe();
 }

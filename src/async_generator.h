@@ -38,8 +38,10 @@ class AsyncGenerator {
   // Resumes the coroutine until it hands control back to the caller after its
   // first suspension. Calling this method after calling any other methods of
   // this coroutine is undefined behavior.
-  void WaitForFirstSuspension() { handle_-> resume(); }
-  
+  void WaitForFirstSuspension() { handle_->resume(); }
+
+  void Resume() { return handle_->resume(); }
+
   // Awaitable that attempts to produce the next value in the sequence. Returns
   // nullptr if there are no more values, or returns the next value. Any
   // exceptions raised raised by the generator body are raised here.
