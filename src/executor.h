@@ -24,14 +24,14 @@ class SerialExecutor {
   auto Sleep(absl::Time time);
 
  private:
-  struct State;
+  struct SharedState;
 
   bool AwaitReady() const;
   void AwaitSuspend(std::coroutine_handle<> pending);
 
   // We use a shared_ptr so that we can asynchronously stop our thread when the
   // executor is destructed.
-  std::shared_ptr<State> state_;
+  std::shared_ptr<SharedState> state_;
   std::jthread thread_;
 };
 

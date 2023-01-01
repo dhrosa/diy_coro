@@ -1,51 +1,80 @@
 #include "diy/coro/executor.h"
 
-struct SerialExecutor::State {
-  absl::Mutex mutex;
-  std::coroutine_handle<> pending ABSL_GUARDED_BY(mutex);
-  bool stop_requested ABSL_GUARDED_BY(mutex) = false;
+#include <atomic>
 
-  void AwaitSuspend(std::coroutine_handle<> new_pending) {
-    const auto idle_or_stopping =
-        [this]() ABSL_SHARED_LOCKS_REQUIRED(mutex) -> bool {
-      return pending == nullptr || stop_requested;
-    };
+namespace {
+struct State {
+  void* pending;
+  std::uint64_t stop_requested;
+};
+}  // namespace
 
-    absl::MutexLock lock(&mutex);
-    mutex.Await(absl::Condition(&idle_or_stopping));
-    pending = new_pending;
+struct SerialExecutor::SharedState {
+  std::atomic<State> state;
+
+  std::atomic_flag pending_in_flight;
+
+  SharedState() {
+    state.store({.pending = nullptr, .stop_requested = 0},
+                std::memory_order::seq_cst);
+  }
+
+  void AwaitSuspend(std::coroutine_handle<> pending) {
+    State previous_state = state.load(std::memory_order::seq_cst);
+    if (previous_state.stop_requested) {
+      return;
+    }
+    if (state.compare_exchange_strong(
+            previous_state, {.pending = pending.address(), .stop_requested = 0},
+            std::memory_order::seq_cst)) {
+      state.notify_one();
+      pending_in_flight.test_and_set(std::memory_order_seq_cst);
+      pending_in_flight.notify_one();
+      pending_in_flight.wait(true, std::memory_order_seq_cst);
+      return;
+    }
+    // Raced with a stop request.
+    assert(previous_state.stop_requested);
   }
 
   void Run(std::stop_token stop_token) {
     const auto on_stop = std::stop_callback(stop_token, [this] {
-      absl::MutexLock lock(&mutex);
-      stop_requested = true;
+      state.store({.pending = nullptr, .stop_requested = 1},
+                  std::memory_order::seq_cst);
+      state.notify_one();
     });
 
-    const auto pending_or_stopping =
-        [this]() ABSL_SHARED_LOCKS_REQUIRED(mutex) -> bool {
-      return pending || stop_requested;
-    };
     while (true) {
-      std::coroutine_handle unlocked_pending;
-      {
-        absl::MutexLock lock(&mutex);
-        mutex.Await(absl::Condition(&pending_or_stopping));
-        if (stop_requested) {
-          return;
-        }
-        std::swap(unlocked_pending, pending);
+      State previous_state = state.load(std::memory_order::seq_cst);
+      if (previous_state.stop_requested) {
+        return;
       }
-      unlocked_pending.resume();
+      if (previous_state.pending == nullptr) {
+        state.wait(previous_state, std::memory_order::seq_cst);
+        continue;
+      }
+      if (state.compare_exchange_strong(
+              previous_state, {.pending = nullptr, .stop_requested = 0},
+              std::memory_order::seq_cst)) {
+        pending_in_flight.wait(false, std::memory_order::seq_cst);
+        pending_in_flight.clear(std::memory_order::seq_cst);
+        pending_in_flight.notify_one();
+        std::coroutine_handle<>::from_address(previous_state.pending).resume();
+        continue;
+      }
+      // Racing stop request.
+      assert(previous_state.stop_requested);
     }
   }
 };
 
 SerialExecutor::SerialExecutor()
-    : state_(new State),
-      thread_([](std::stop_token stop_token,
-                 std::shared_ptr<State> state) { state->Run(stop_token); },
-              state_) {}
+    : state_(new SharedState),
+      thread_(
+          [](std::stop_token stop_token, std::shared_ptr<SharedState> state) {
+            state->Run(stop_token);
+          },
+          state_) {}
 
 SerialExecutor::~SerialExecutor() {
   // Let the scheduling thread finish up asynchronously. This allows
