@@ -52,7 +52,7 @@ class SharedHandle {
     Decrement();
     handle_ = other.handle_;
     count_ = other.count_;
-    count_->fetch_add(1);
+    Increment();
     return *this;
   }
 
@@ -69,7 +69,7 @@ class SharedHandle {
   SharedHandle(const SharedHandle& other) {
     handle_ = other.handle_;
     count_ = other.count_;
-    count_->fetch_add(1);
+    Increment();
   }
 
   SharedHandle(SharedHandle&& other) {
