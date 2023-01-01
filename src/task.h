@@ -108,7 +108,7 @@ struct Task<T>::ValuePromiseBase {
   template <typename U = T>
   void return_value(U&& value) {
     final_value = std::move(value);
-    final_value_gate.test_and_set();
+    final_value_gate.test_and_set(std::memory_order::release);
   }
 };
 
@@ -123,7 +123,7 @@ struct Task<T>::Promise
 
   Promise() {
     state.store({.phase = kConstructed, .waiting = nullptr});
-    handle_reference_count.store(0);
+    handle_reference_count.store(0, std::memory_order::relaxed);
   }
 
   SharedHandle HandleRef() {
@@ -146,7 +146,7 @@ struct Task<T>::Promise
     if constexpr (kIsVoidTask) {
       return;
     } else {
-      this->final_value_gate.test();
+      this->final_value_gate.test(std::memory_order::acquire);
       return std::move(this->final_value);
     }
   }
@@ -157,11 +157,12 @@ struct Task<T>::Promise
       std::atomic<State>& state;
 
       void await_resume() {
-        State previous_state = state.load();
+        State previous_state = state.load(std::memory_order::relaxed);
         while (true) {
           if (state.compare_exchange_strong(
                   previous_state,
-                  {.phase = kRunning, .waiting = previous_state.waiting})) {
+                  {.phase = kRunning, .waiting = previous_state.waiting},
+                  std::memory_order::relaxed)) {
             // We were sequenced entirely before the waiter.
             return;
           }
@@ -188,18 +189,20 @@ struct Task<T>::Promise
         // concurrently calling std::atomic::notify_one(), so we keep the handle
         // alive throughout this call.
         SharedHandle handle_ref = promise.HandleRef();
-        State previous_state = promise.state.load();
+        State previous_state = promise.state.load(std::memory_order::relaxed);
         while (true) {
           if (previous_state.waiting) {
             // Task completion sequenced entirely after waiter.
-            promise.state.store({.phase = kComplete, .waiting = nullptr});
+            promise.state.store({.phase = kComplete, .waiting = nullptr},
+                                std::memory_order::relaxed);
             promise.state.notify_one();
             return std::coroutine_handle<>::from_address(
                 previous_state.waiting);
           }
           // Waiter not registered yet.
           if (promise.state.compare_exchange_strong(
-                  previous_state, {.phase = kComplete, .waiting = nullptr})) {
+                  previous_state, {.phase = kComplete, .waiting = nullptr},
+                  std::memory_order::relaxed)) {
             promise.state.notify_one();
             // Waiter sequenced entirely after task completion. It's the
             // waiter's responsibility to resume themselves.
@@ -224,7 +227,7 @@ auto Task<T>::operator co_await() && {
     State previous_state;
 
     bool await_ready() {
-      previous_state = task.promise().state.load();
+      previous_state = task.promise().state.load(std::memory_order::relaxed);
       return previous_state.phase == kComplete;
     }
 
@@ -236,7 +239,8 @@ auto Task<T>::operator co_await() && {
         if (previous_state.phase == kConstructed) {
           // It's our job to start task. No one can race against us at this
           // point because we have consumed the task.
-          state.store({.phase = kRunning, .waiting = waiting.address()});
+          state.store({.phase = kRunning, .waiting = waiting.address()},
+                      std::memory_order::relaxed);
           return task.handle_.get();
         }
         if (previous_state.phase == kComplete) {
@@ -244,9 +248,10 @@ auto Task<T>::operator co_await() && {
           return waiting;
         }
         // Task was already running and isn't complete yet.
-        if (state.compare_exchange_strong(previous_state,
-                                          {.phase = previous_state.phase,
-                                           .waiting = waiting.address()})) {
+        if (state.compare_exchange_strong(
+                previous_state,
+                {.phase = previous_state.phase, .waiting = waiting.address()},
+                std::memory_order::relaxed)) {
           // Task completion is sequenced entirely after this wait. It's the
           // task's reponsibility to wake us.
           return std::noop_coroutine();
@@ -266,7 +271,7 @@ template <typename T>
 T Task<T>::Wait() && {
   std::atomic<State>& state = promise().state;
   while (true) {
-    State previous_state = state.load();
+    State previous_state = state.load(std::memory_order::relaxed);
     switch (previous_state.phase) {
       case kConstructed:
         // Task was never started; start it ourselves.

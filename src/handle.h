@@ -94,11 +94,12 @@ class SharedHandle {
  private:
   void Increment() {
     if (count_ != nullptr) {
-      count_->fetch_add(1);
+      count_->fetch_add(1, std::memory_order::acq_rel);
     }
   }
   void Decrement() {
-    if (count_ != nullptr && count_->fetch_sub(1) == 1) {
+    if (count_ != nullptr &&
+        count_->fetch_sub(1, std::memory_order::acq_rel) == 1) {
       handle_.destroy();
       count_ = nullptr;
     }
