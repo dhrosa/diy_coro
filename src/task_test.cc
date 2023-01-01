@@ -25,7 +25,6 @@ TEST(TaskTest, ReturnVoid) {
   EXPECT_TRUE(called);
 }
 
-
 TEST(TaskTest, WaitForFirstSuspension) {
   bool body_started = false;
   auto task = [](bool& body_started) -> Task<int> {

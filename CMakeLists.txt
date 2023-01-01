@@ -21,7 +21,7 @@ if(PROJECT_IS_TOP_LEVEL)
     -fno-omit-frame-pointer
     -fno-optimize-sibling-calls
     -fsanitize=thread)
-  add_link_options(-fsanitize=thread)
+  add_link_options(-fsanitize=thread -latomic)
 
   include(FetchContent)
 

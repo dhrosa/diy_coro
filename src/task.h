@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+#include <cassert>
 #include <concepts>
 #include <coroutine>
 #include <exception>
@@ -65,6 +67,15 @@ class Task {
   struct VoidPromiseBase;
   struct ValuePromiseBase;
   struct PromiseBase;
+  enum Phase : std::uint64_t {
+    kConstructed,
+    kRunning,
+    kComplete,
+  };
+  struct State {
+    std::uint64_t phase;
+    void* waiting;
+  };
 
   Promise& promise() { return handle_.template promise<Promise>(); }
 
@@ -91,7 +102,7 @@ struct Task<T>::ValuePromiseBase {
 
   template <typename U = T>
   void return_value(U&& value) {
-    this->final_value = std::move(value);
+    final_value = std::move(value);
   }
 };
 
@@ -117,8 +128,9 @@ struct Task<T>::PromiseBase
 
 template <typename T>
 struct Task<T>::Promise : PromiseBase {
-  // The suspended coroutine awaiting this task's completion, if any.
-  std::coroutine_handle<> parent;
+  std::atomic<State> state;
+
+  Promise() { state.store({.phase = kConstructed, .waiting = nullptr}); }
 
   Task<T> get_return_object() {
     Task<T> task;
@@ -127,12 +139,61 @@ struct Task<T>::Promise : PromiseBase {
   }
 
   // Lazy execution. Task body is deferred to the first explicit resume() call.
-  std::suspend_always initial_suspend() noexcept { return {}; }
+  auto initial_suspend() noexcept {
+    struct InitialSuspend : std::suspend_always {
+      std::atomic<State>& state;
+
+      void await_resume() {
+        State previous_state = state.load();
+        while (true) {
+          if (state.compare_exchange_strong(
+                  previous_state,
+                  {.phase = kRunning, .waiting = previous_state.waiting})) {
+            // We were sequenced entirely before the waiter.
+            return;
+          }
+          // The waiter raced with us and registered itself successfully. Redo
+          // logic with newly observed state
+          assert(previous_state.waiting != nullptr);
+          continue;
+        }
+      }
+    };
+    return InitialSuspend{.state = state};
+  };
 
   // Resume execution of parent coroutine that was awaiting this task's
   // completion, if any.
   auto final_suspend() noexcept {
-    return ::Resume(std::exchange(parent, nullptr));
+    struct FinalSuspend : std::suspend_always {
+      std::atomic<State>& state;
+
+      std::coroutine_handle<> await_suspend(
+          [[maybe_unused]] std::coroutine_handle<> handle) {
+        State previous_state = state.load();
+        while (true) {
+          assert(previous_state.phase == kRunning);
+          if (previous_state.waiting) {
+            // Task completion sequenced entirely after waiter.
+            state.store({.phase = kComplete, .waiting = nullptr});
+            state.notify_one();
+            return std::coroutine_handle<>::from_address(
+                previous_state.waiting);
+          }
+          // Waiter not registered yet.
+          if (state.compare_exchange_strong(
+                  previous_state, {.phase = kComplete, .waiting = nullptr})) {
+            state.notify_one();
+            // Waiter sequenced entirely after task completion. It's the
+            // waiter's responsibility to resume themselves.
+            return std::noop_coroutine();
+          }
+          // Waiter appeared during transition. Redo above logic with newly
+          // observed state.
+        }
+      }
+    };
+    return FinalSuspend{.state = state};
   }
 };
 
@@ -142,17 +203,42 @@ auto Task<T>::operator co_await() && {
     // The child task whose completion is being awaited.
     Task task;
 
+    // Lets us reuse atomic load from await_ready() in await_suspend().
+    State previous_state;
+
     bool await_ready() {
-      return task.handle_->done();
-    }
-    
-    // Tell the child task to resume the parent (current task) when it
-    // completes. Then context switch into the child task.
-    std::coroutine_handle<> await_suspend(std::coroutine_handle<> parent) {
-      task.promise().parent = parent;
-      return task.handle_.get();
+      previous_state = task.promise().state.load();
+      return previous_state.phase == kComplete;
     }
 
+    std::coroutine_handle<> await_suspend(std::coroutine_handle<> waiting) {
+      Promise& promise = task.promise();
+      std::atomic<State>& state = promise.state;
+      while (true) {
+        assert(previous_state.waiting == nullptr);
+        if (previous_state.phase == kConstructed) {
+          // It's our job to start task. No one can race against us at this
+          // point because we have consumed the task.
+          state.store({.phase = kRunning, .waiting = waiting.address()});
+          return task.handle_.get();
+        }
+        if (previous_state.phase == kComplete) {
+          // Task completion sequenced entirely before wait; resume immediately.
+          return waiting;
+        }
+        // Task was already running and isn't complete yet.
+        if (state.compare_exchange_strong(previous_state,
+                                          {.phase = previous_state.phase,
+                                           .waiting = waiting.address()})) {
+          // Task completion is sequenced entirely after this wait. It's the
+          // task's reponsibility to wake us.
+          return std::noop_coroutine();
+        }
+        // Task phase transition raced with our wait. Redo checks with newly
+        // observed state.
+        assert(previous_state.waiting != nullptr);
+      }
+    }
     // Child task has completed; return its final value.
     auto await_resume() { return task.promise().ReturnOrThrow(); }
   };
@@ -161,46 +247,24 @@ auto Task<T>::operator co_await() && {
 
 template <typename T>
 T Task<T>::Wait() && {
-  // We create a custom coroutine that synchronously notifies the caller when
-  // its complete.
-  struct SyncPromise;
-
-  struct SyncTask {
-    Handle handle;
-
-    using promise_type = SyncPromise;
-  };
-
-  struct SyncPromise : PromiseBase {
-    std::latch complete{1};
-
-    SyncTask get_return_object() {
-      return {Handle(std::coroutine_handle<SyncPromise>::from_promise(*this))};
+  std::atomic<State>& state = promise().state;
+  while (true) {
+    State previous_state = state.load();
+    switch (previous_state.phase) {
+      case kConstructed:
+        // Task was never started; start it ourselves.
+        assert(previous_state.waiting == nullptr);
+        handle_->resume();
+        continue;
+      case kRunning:
+        // Task was already running. Wait for it to transition.
+        assert(previous_state.waiting == nullptr);
+        state.wait(previous_state);
+        continue;
+      case kComplete:
+        return promise().ReturnOrThrow();
     }
-
-    auto initial_suspend() { return std::suspend_never{}; }
-
-    // We can't signal completion directly inside final_suspend, as this member
-    // is called while the coroutine is still executing. We instead utilize the
-    // fact that when  an awaiter's await_suspend() is called,  the coroutine is
-    // guaranteed to be suspended.
-    auto final_suspend() noexcept {
-      struct FinalAwaiter : std::suspend_always {
-        std::latch& complete;
-        void await_suspend(std::coroutine_handle<>) noexcept {
-          complete.count_down();
-        }
-      };
-      return FinalAwaiter{.complete = complete};
-    }
-  };
-
-  auto sync_task = [](Task<T> task) -> SyncTask {
-    co_return (co_await std::move(task));
-  }(std::move(*this));
-  SyncPromise& promise = sync_task.handle.template promise<SyncPromise>();
-  promise.complete.wait();
-  return promise.ReturnOrThrow();
+  }
 }
 
 template <typename T>

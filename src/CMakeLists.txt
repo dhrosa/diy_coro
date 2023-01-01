@@ -39,7 +39,8 @@ diy_cc_test(executor_test AUTO LIBRARIES task)
 diy_cc_library(intrusive_linked_list AUTO)
 diy_cc_test(intrusive_linked_list_test AUTO)
 
-diy_cc_library(broadcast AUTO LIBRARIES async_generator absl::synchronization absl::flat_hash_map absl::log)
+diy_cc_library(broadcast AUTO LIBRARIES async_generator absl::synchronization
+                                        absl::flat_hash_map absl::log)
 diy_cc_test(broadcast_test AUTO LIBRARIES task)
 
 diy_cc_library(event AUTO LIBRARIES absl::synchronization)
