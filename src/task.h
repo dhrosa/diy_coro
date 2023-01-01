@@ -100,17 +100,42 @@ template <typename T>
 struct Task<T>::ValuePromiseBase {
   T final_value;
 
+  // Unsure if this is strictly needed; Promise::state should be enough to fence
+  // access to final_value I would think. But using this as an explicit fence
+  // around ’final_value’ satisfies TSAN.
+  std::atomic_flag final_value_gate;
+
   template <typename U = T>
   void return_value(U&& value) {
     final_value = std::move(value);
+    final_value_gate.test_and_set();
   }
 };
 
 template <typename T>
-struct Task<T>::PromiseBase
+struct Task<T>::Promise
     : std::conditional_t<kIsVoidTask, VoidPromiseBase, ValuePromiseBase> {
+  std::atomic<State> state;
+  // Number of live references to our coroutine handle.
+  std::atomic_size_t handle_reference_count;
   // The exception thrown by body of the task, if any.
   std::exception_ptr exception;
+
+  Promise() {
+    state.store({.phase = kConstructed, .waiting = nullptr});
+    handle_reference_count.store(0);
+  }
+
+  SharedHandle HandleRef() {
+    return SharedHandle(std::coroutine_handle<Promise>::from_promise(*this),
+                        &handle_reference_count);
+  }
+
+  Task<T> get_return_object() {
+    Task<T> task;
+    task.handle_ = HandleRef();
+    return task;
+  }
 
   void unhandled_exception() { exception = std::current_exception(); }
 
@@ -121,30 +146,9 @@ struct Task<T>::PromiseBase
     if constexpr (kIsVoidTask) {
       return;
     } else {
+      this->final_value_gate.test();
       return std::move(this->final_value);
     }
-  }
-};
-
-template <typename T>
-struct Task<T>::Promise : PromiseBase {
-  std::atomic<State> state;
-  // Number of live references to our coroutine handle.
-  std::atomic_size_t reference_count;
-
-  Promise() {
-    state.store({.phase = kConstructed, .waiting = nullptr});
-    reference_count.store(0);
-  }
-
-  SharedHandle HandleRef() {
-    return SharedHandle(std::coroutine_handle<Promise>::from_promise(*this), &reference_count);
-  }
-
-  Task<T> get_return_object() {
-    Task<T> task;
-    task.handle_ = HandleRef();
-    return task;
   }
 
   // Lazy execution. Task body is deferred to the first explicit resume() call.
