@@ -79,7 +79,7 @@ class Task {
 
   Promise& promise() { return handle_.template promise<Promise>(); }
 
-  Handle handle_;
+  SharedHandle handle_;
 };
 
 // CTAD guide for inferring the Task type when converting from an arbitrary
@@ -129,12 +129,21 @@ struct Task<T>::PromiseBase
 template <typename T>
 struct Task<T>::Promise : PromiseBase {
   std::atomic<State> state;
+  // Number of live references to our coroutine handle.
+  std::atomic_size_t reference_count;
 
-  Promise() { state.store({.phase = kConstructed, .waiting = nullptr}); }
+  Promise() {
+    state.store({.phase = kConstructed, .waiting = nullptr});
+    reference_count.store(0);
+  }
+
+  SharedHandle HandleRef() {
+    return SharedHandle(std::coroutine_handle<Promise>::from_promise(*this), &reference_count);
+  }
 
   Task<T> get_return_object() {
     Task<T> task;
-    task.handle_ = Handle(std::coroutine_handle<Promise>::from_promise(*this));
+    task.handle_ = HandleRef();
     return task;
   }
 
@@ -166,24 +175,28 @@ struct Task<T>::Promise : PromiseBase {
   // completion, if any.
   auto final_suspend() noexcept {
     struct FinalSuspend : std::suspend_always {
-      std::atomic<State>& state;
+      Promise& promise;
 
       std::coroutine_handle<> await_suspend(
           [[maybe_unused]] std::coroutine_handle<> handle) {
-        State previous_state = state.load();
+        // Transitioning to kComplete phase may instantly trigger a waiting
+        // thread to destruct its own copy of our handle while we’re
+        // concurrently calling std::atomic::notify_one(), so we keep the handle
+        // alive throughout this call.
+        SharedHandle handle_ref = promise.HandleRef();
+        State previous_state = promise.state.load();
         while (true) {
-          assert(previous_state.phase == kRunning);
           if (previous_state.waiting) {
             // Task completion sequenced entirely after waiter.
-            state.store({.phase = kComplete, .waiting = nullptr});
-            state.notify_one();
+            promise.state.store({.phase = kComplete, .waiting = nullptr});
+            promise.state.notify_one();
             return std::coroutine_handle<>::from_address(
                 previous_state.waiting);
           }
           // Waiter not registered yet.
-          if (state.compare_exchange_strong(
+          if (promise.state.compare_exchange_strong(
                   previous_state, {.phase = kComplete, .waiting = nullptr})) {
-            state.notify_one();
+            promise.state.notify_one();
             // Waiter sequenced entirely after task completion. It's the
             // waiter's responsibility to resume themselves.
             return std::noop_coroutine();
@@ -193,7 +206,7 @@ struct Task<T>::Promise : PromiseBase {
         }
       }
     };
-    return FinalSuspend{.state = state};
+    return FinalSuspend{.promise = *this};
   }
 };
 
