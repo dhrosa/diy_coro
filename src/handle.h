@@ -91,17 +91,15 @@ class SharedHandle {
     return &handle_;
   }
 
-  void reset() { *this = SharedHandle(); }
-
  private:
   void Increment() {
     if (count_ != nullptr) {
-      count_->fetch_add(1, std::memory_order::seq_cst);
+      count_->fetch_add(1, std::memory_order::acq_rel);
     }
   }
   void Decrement() {
     if (count_ != nullptr &&
-        count_->fetch_sub(1, std::memory_order::seq_cst) == 1) {
+        count_->fetch_sub(1, std::memory_order::acq_rel) == 1) {
       handle_.destroy();
       count_ = nullptr;
     }
