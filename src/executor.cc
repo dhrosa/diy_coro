@@ -3,33 +3,43 @@
 #include <atomic>
 
 namespace {
+
 struct State {
+  // Handle to the coroutine waiting to be scheduled.
   void* pending;
+  // 0 under normal operation, 1 when a stop has been requested.
   std::uint64_t stop_requested;
 };
 }  // namespace
 
 struct SerialExecutor::SharedState {
   std::atomic<State> state;
+
+  // Set by the producer after sending a pending waiter, and cleared by the
+  // consumer after consuming the pending waiter. This is needed to release the
+  // writes up to coroutine suspension to the consumer thread. For some reason
+  // `state` by itself does not produce a sufficient barrier.
   std::atomic_flag pending_in_flight;
 
   SharedState() {
+    assert(state.is_lock_free());
     state.store({.pending = nullptr, .stop_requested = 0},
                 std::memory_order::relaxed);
   }
 
   void AwaitSuspend(std::coroutine_handle<> pending) {
     State previous_state = state.load(std::memory_order::relaxed);
+    pending_in_flight.clear(std::memory_order::relaxed);
     if (previous_state.stop_requested) {
       return;
     }
+    assert(previous_state.pending != nullptr);
     if (state.compare_exchange_strong(
             previous_state, {.pending = pending.address(), .stop_requested = 0},
             std::memory_order::acq_rel)) {
       state.notify_one();
       pending_in_flight.test_and_set(std::memory_order::release);
       pending_in_flight.notify_one();
-      pending_in_flight.wait(true, std::memory_order::acquire);
       return;
     }
     // Raced with a stop request.
@@ -56,8 +66,6 @@ struct SerialExecutor::SharedState {
               previous_state, {.pending = nullptr, .stop_requested = 0},
               std::memory_order::acq_rel)) {
         pending_in_flight.wait(false, std::memory_order::acquire);
-        pending_in_flight.clear(std::memory_order::release);
-        pending_in_flight.notify_one();
         std::coroutine_handle<>::from_address(previous_state.pending).resume();
         continue;
       }
