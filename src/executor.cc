@@ -91,5 +91,8 @@ bool SerialExecutor::AwaitReady() const {
 }
 
 void SerialExecutor::AwaitSuspend(std::coroutine_handle<> pending) {
-  state_->AwaitSuspend(pending);
+  // This await might unblock some event that causes us to be destructed. So the
+  // destruction may race with our access to state_.
+  std::shared_ptr<SharedState> state = state_;
+  state->AwaitSuspend(pending);
 }
