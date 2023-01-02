@@ -43,7 +43,7 @@ diy_cc_library(broadcast AUTO LIBRARIES async_generator absl::synchronization
                                         absl::flat_hash_map absl::log)
 diy_cc_test(broadcast_test AUTO LIBRARIES task)
 
-diy_cc_library(event AUTO LIBRARIES absl::synchronization)
+diy_cc_library(event AUTO LIBRARIES)
 diy_cc_test(event_test AUTO LIBRARIES task)
 
 # Top-level target for public consumption.
