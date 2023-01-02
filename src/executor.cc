@@ -3,74 +3,62 @@
 #include <atomic>
 
 namespace {
-
-struct State {
-  // Handle to the coroutine waiting to be scheduled.
-  void* pending;
-  // 0 under normal operation, 1 when a stop has been requested.
-  std::uint64_t stop_requested;
+// Internal state is is either a coroutine handle address, or one of the below
+// special values.
+enum : std::uintptr_t {
+  // No pending waiter.
+  kIdle = 0,
+  // Run() thread is shutting down.
+  kStopRequested = 1,
 };
 }  // namespace
 
 struct SerialExecutor::SharedState {
-  std::atomic<State> state;
+  std::atomic_uintptr_t state;
 
-  // Set by the producer after sending a pending waiter, and cleared by the
-  // consumer after consuming the pending waiter. This is needed to release the
-  // writes up to coroutine suspension to the consumer thread. For some reason
-  // `state` by itself does not produce a sufficient barrier.
-  std::atomic_flag pending_in_flight;
-
-  SharedState() {
-    assert(state.is_lock_free());
-    state.store({.pending = nullptr, .stop_requested = 0},
-                std::memory_order::relaxed);
-  }
+  SharedState() { state.store(kIdle, std::memory_order::relaxed); }
 
   void AwaitSuspend(std::coroutine_handle<> pending) {
-    State previous_state = state.load(std::memory_order::relaxed);
-    pending_in_flight.clear(std::memory_order::relaxed);
-    if (previous_state.stop_requested) {
+    std::uintptr_t previous_state = state.load(std::memory_order::relaxed);
+    if (previous_state == kStopRequested) {
       return;
     }
-    assert(previous_state.pending != nullptr);
+    assert(previous_state == kIdle);
+    // Attempt kIdle -> pending transition.
     if (state.compare_exchange_strong(
-            previous_state, {.pending = pending.address(), .stop_requested = 0},
+            previous_state, reinterpret_cast<std::uintptr_t>(pending.address()),
             std::memory_order::acq_rel)) {
       state.notify_one();
-      pending_in_flight.test_and_set(std::memory_order::release);
-      pending_in_flight.notify_one();
       return;
     }
     // Raced with a stop request.
-    assert(previous_state.stop_requested);
+    assert(previous_state == kStopRequested);
   }
 
   void Run(std::stop_token stop_token) {
     const auto on_stop = std::stop_callback(stop_token, [this] {
-      state.store({.pending = nullptr, .stop_requested = 1},
-                  std::memory_order::release);
+      state.store(kStopRequested, std::memory_order::release);
       state.notify_one();
     });
-
     while (true) {
-      State previous_state = state.load(std::memory_order::relaxed);
-      if (previous_state.stop_requested) {
+      // Wait for kIdle -> ?? transition.
+      state.wait(kIdle, std::memory_order::relaxed);
+      std::uintptr_t previous_state = state.load(std::memory_order::relaxed);
+      if (previous_state == kStopRequested) {
         return;
       }
-      if (previous_state.pending == nullptr) {
-        state.wait(previous_state, std::memory_order::relaxed);
-        continue;
-      }
-      if (state.compare_exchange_strong(
-              previous_state, {.pending = nullptr, .stop_requested = 0},
-              std::memory_order::acq_rel)) {
-        pending_in_flight.wait(false, std::memory_order::acquire);
-        std::coroutine_handle<>::from_address(previous_state.pending).resume();
+      assert(previous_state != kIdle);
+      // State contains a coroutine handle address. Attempt pending -> kIdle
+      // transition.
+      if (state.compare_exchange_strong(previous_state, kIdle,
+                                        std::memory_order::acq_rel)) {
+        std::coroutine_handle<>::from_address(
+            reinterpret_cast<void*>(previous_state))
+            .resume();
         continue;
       }
       // Racing stop request.
-      assert(previous_state.stop_requested);
+      assert(previous_state == kStopRequested);
     }
   }
 };
