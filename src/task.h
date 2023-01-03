@@ -45,13 +45,6 @@ class Task {
           co_return (co_await a);
         }(traits::ToAwaiter(a))) {}
 
-  // Resumes the coroutine until it hands control back to the caller after its
-  // first suspension. Calling this method after calling any other methods of
-  // this coroutine is undefined behavior.
-  void WaitForFirstSuspension() { handle_->resume(); }
-
-  void Resume() { return handle_->resume(); }
-
   // Creates an awaitable object that awaits the completion of this task.
   auto operator co_await() &&;
 

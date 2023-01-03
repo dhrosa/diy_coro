@@ -28,18 +28,3 @@ TEST(BroadcastTest, NoSubscribers) {
   Broadcast<int> broadcast(IotaPublisher());
   broadcast.Publish(1).Wait();
 }
-
-TEST(BroadcastTest, SingleSubscriber) {
-  Broadcast<int> broadcast(IotaPublisher());
-
-  auto subscriber = broadcast.Subscribe();
-  subscriber.Resume();
-  // Subscriber now waiting for publisher.
-
-  auto publisher = broadcast.Publish(3);
-  publisher.Resume();
-  // Publisher now waiting for subscriber to consume value.
-
-  subscriber.Resume();
-  EXPECT_THAT(Task(subscriber).Wait(), Pointee(Eq(3)));
-}
