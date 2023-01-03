@@ -1,7 +1,5 @@
 #pragma once
 
-#include <absl/log/log.h>
-
 #include <atomic>
 #include <cassert>
 #include <concepts>
@@ -84,15 +82,9 @@ template <typename T>
 struct Task<T>::ValuePromiseBase {
   T final_value;
 
-  // Unsure if this is strictly needed; Promise::state should be enough to fence
-  // access to final_value I would think. But using this as an explicit fence
-  // around ’final_value’ satisfies TSAN.
-  std::atomic_flag final_value_gate;
-
   template <typename U = T>
   void return_value(U&& value) {
     final_value = std::move(value);
-    final_value_gate.test_and_set(std::memory_order::release);
   }
 };
 
@@ -132,7 +124,6 @@ struct Task<T>::Promise
     if constexpr (kIsVoidTask) {
       return;
     } else {
-      this->final_value_gate.wait(false, std::memory_order::acquire);
       return std::move(this->final_value);
     }
   }
