@@ -1,16 +1,15 @@
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
 #include <absl/log/log.h>
 #include <absl/synchronization/mutex.h>
 
 #include <atomic>
 #include <coroutine>
 #include <iterator>
+#include <list>
 #include <optional>
 #include <ranges>
 #include <stdexcept>
-#include <vector>
 
 #include "diy/coro/async_generator.h"
 #include "diy/coro/intrusive_linked_list.h"
@@ -23,103 +22,135 @@ class Broadcast {
   Broadcast(AsyncGenerator<T>&& publisher) : state_(std::move(publisher)) {}
   AsyncGenerator<const T> Subscribe();
 
-  Task<> Publish(const T& value);
-
  private:
   struct State;
   struct Subscriber;
 
-  enum Phase {
-    kWaitingForValue,
-    kReceivedValue,
-  };
   State state_;
 };
 
 template <typename T>
 struct Broadcast<T>::Subscriber {
-  State& state;
-  Subscriber* next = nullptr;
+  std::atomic_int phase;
   std::coroutine_handle<> waiting;
 };
 
 template <typename T>
 struct Broadcast<T>::State {
   AsyncGenerator<T> publisher;
-  IntrusiveLinkedList<Subscriber> subscribers;
-  Phase desired_phase;
-  absl::flat_hash_map<Subscriber*, Phase> subscriber_phases;
-  std::coroutine_handle<> waiting_publisher;
+  std::list<Subscriber> subscribers;
   const T* value = nullptr;
 
-  bool AllSubscribersInDesiredPhase() const {
-    return std::ranges::all_of(std::views::values(subscriber_phases),
-                               [&](Phase p) { return p == desired_phase; });
+  enum PublisherState : int { kNeedRead, kDeliveryInProgress };
+
+  enum SubscriberPhase : int {
+    kIdle,
+    kNeedValue,
+    kHaveValue,
+    kValueSent,
+  };
+
+  std::atomic_int publisher_state;
+
+  std::coroutine_handle<> leader;
+
+  State(AsyncGenerator<T> publisher) : publisher(std::move(publisher)) {
+    publisher_state.store(kNeedRead, std::memory_order::relaxed);
   }
 
-  std::coroutine_handle<> NextUntransitionedHandle() {
-    for (auto& [subscriber, phase] : subscriber_phases) {
-      if (phase != desired_phase && subscriber->waiting) {
-        return std::exchange(subscriber->waiting, nullptr);
-      }
-    }
-    return std::noop_coroutine();
-  }
-
-  // Awaitable thats waits for all subscribers to transition to the current
-  // desired phase.
-  //
-  // Null if the parent coroutine is the sender, othewise the subsriber
-  // corresponding to the parent coroutine.
-  auto PhaseTransitionComplete(Subscriber* subscriber = nullptr) {
-    struct Awaiter : std::suspend_always {
+  auto WaitForValue(Subscriber& subscriber) {
+    struct Awaiter {
       State& state;
-      Subscriber* subscriber = nullptr;
+      Subscriber& subscriber;
 
-      bool await_ready() { return state.AllSubscribersInDesiredPhase(); }
+      int previous_phase;
 
-      std::coroutine_handle<> await_suspend(std::coroutine_handle<> handle) {
-        if (subscriber == nullptr) {
-          state.waiting_publisher = handle;
-        } else {
-          subscriber->waiting = handle;
+      bool await_ready() {
+        previous_phase = subscriber.phase.load(std::memory_order::acquire);
+        return previous_phase == kHaveValue;
+      }
+
+      bool await_suspend(std::coroutine_handle<> handle) {
+        assert(previous_phase == kIdle);
+        subscriber.waiting = handle;
+        if (subscriber.phase.compare_exchange_strong(
+                previous_phase, kNeedValue, std::memory_order::acq_rel)) {
+          // kIdle -> kNeedValue transition.
+          return true;
         }
-        return state.NextUntransitionedHandle();
+        // Racing kIdle -> kHaveValue transition. Resume immediately.
+        assert(previous_phase == kHaveValue);
+        return false;
       }
 
       void await_resume() {
-        if (subscriber == nullptr) {
-          return;
-        }
-        if (state.waiting_publisher && state.AllSubscribersInDesiredPhase()) {
-          // We’re the final subscriber to transition states; resume the
-          // publisher.
-          std::exchange(state.waiting_publisher, nullptr).resume();
-        }
+        subscriber.phase.store(kHaveValue, std::memory_order::release);
       }
     };
-    return Awaiter{.state = *this, .subscriber = subscriber};
+    return Awaiter{*this, subscriber};
+  }
+
+  auto NotifyValue(Subscriber& subscriber) { return std::suspend_always(); }
+
+  auto WaitForAllValuesSent(Subscriber& leader) {
+    struct Awaiter : std::suspend_always {
+      State& state;
+      Subscriber& leader;
+
+      std::coroutine_handle<> await_suspend(std::coroutine_handle<> handle) {
+        for (Subscriber& subscriber : state.subscribers) {
+          int previous_phase =
+              subscriber.phase.load(std::memory_order::acquire);
+          if (previous_phase == kIdle) {
+            if (subscriber.phase.compare_exchange_strong(
+                    previous_phase, kHaveValue, std::memory_order::acq_rel)) {
+              // kIdle -> kHaveValue transition.
+              continue;
+            } else {
+              // Racing kIdle -> kNeedValue transition.
+              assert(previous_phase == kNeedValue);
+              return std::exchange(subscriber.waiting, nullptr);
+            }
+          } else if (previous_phase == kNeedValue) {
+            return std::exchange(subscriber.waiting, nullptr);
+          }
+        }
+        return std::noop_coroutine();
+      }
+    };
+
+    return Awaiter{.state = *this, .leader = leader};
+  }
+
+  AsyncGenerator<const T> Subscription(Subscriber& subscriber) {
+    while (true) {
+      int previous_state = kNeedRead;
+      if (publisher_state.compare_exchange_strong(previous_state,
+                                                  kDeliveryInProgress,
+                                                  std::memory_order::acq_rel)) {
+        // Successful kNeedRead -> kReadInProgress transition; we've won
+        // election to retrieve next publisher value.
+        subscriber.phase.store(kNeedValue, std::memory_order::release);
+        value = co_await publisher;
+        subscriber.phase.store(kHaveValue, std::memory_order::release);
+      } else {
+        // Another subscriber raced against us; wait for it to give us the
+        // value.
+        co_await WaitForValue(subscriber);
+      }
+      if (value) {
+        co_yield *value;
+      }
+      co_await WaitForAllValuesSent(subscriber);
+      if (value == nullptr) {
+        co_return;
+      }
+    }
   }
 };
 
 template <typename T>
-Task<> Broadcast<T>::Publish(const T& value) {
-  state_.desired_phase = kWaitingForValue;
-  co_await state_.PhaseTransitionComplete();
-  state_.value = &value;
-  state_.desired_phase = kReceivedValue;
-  co_await state_.PhaseTransitionComplete();
-}
-
-template <typename T>
 AsyncGenerator<const T> Broadcast<T>::Subscribe() {
-  Subscriber subscriber{.state = state_};
-  state_.subscribers.push_back(subscriber);
-  while (true) {
-    state_.subscriber_phases[&subscriber] = kWaitingForValue;
-    co_await state_.PhaseTransitionComplete();
-    co_yield *state_.value;
-    state_.subscriber_phases[&subscriber] = kReceivedValue;
-    co_await state_.PhaseTransitionComplete();
-  }
+  state_.subscribers.emplace_back();
+  return state_.Subscription(state_.subscribers.back());
 }

@@ -26,5 +26,10 @@ std::optional<int> NextValue(AsyncGenerator<int>& generator) {
 
 TEST(BroadcastTest, NoSubscribers) {
   Broadcast<int> broadcast(IotaPublisher());
-  broadcast.Publish(1).Wait();
+}
+
+TEST(BroadcastTest, SingleSubscriber) {
+  Broadcast<int> broadcast(IotaPublisher());
+
+  auto s = broadcast.Subscribe();
 }

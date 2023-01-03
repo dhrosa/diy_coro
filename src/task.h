@@ -129,9 +129,7 @@ struct Task<T>::Promise
   }
 
   // Lazy execution. Task body is deferred to the first explicit resume() call.
-  auto initial_suspend() noexcept {
-    return std::suspend_always();
-  };
+  auto initial_suspend() noexcept { return std::suspend_always(); };
 
   // Resume execution of parent coroutine that was awaiting this task's
   // completion, if any.
