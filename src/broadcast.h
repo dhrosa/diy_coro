@@ -32,6 +32,7 @@ class Broadcast {
 
 template <typename T>
 struct Broadcast<T>::Subscriber {
+  std::optional<typename AsyncGenerator<const T>::Yielder> yielder;
   std::coroutine_handle<> waiting;
   bool consumed_value = false;
 };
@@ -55,6 +56,12 @@ struct Broadcast<T>::State {
   State(AsyncGenerator<T> publisher) : publisher(std::move(publisher)) {}
 
   AsyncGenerator<const T> Subscription(Subscriber& subscriber) {
+    co_await FirstValue(subscriber,
+                        co_await AsyncGenerator<const T>::GetYielder());
+  }
+
+  Task<> FirstValue(Subscriber& subscriber,
+                    AsyncGenerator<const T>::Yielder yielder) {
     Subscriber* current_leader;
     {
       auto lock = std::lock_guard(mutex);
@@ -63,6 +70,7 @@ struct Broadcast<T>::State {
         value_phase = kReadingValue;
       }
       current_leader = leader;
+      subscriber.yielder = yielder;
     }
     const bool is_leader = current_leader == &subscriber;
     if (is_leader) {
@@ -70,11 +78,10 @@ struct Broadcast<T>::State {
       auto lock = std::lock_guard(mutex);
       value_phase = kHaveValue;
     } else {
-      // Wait for leader to read value.
       co_await WaitForReadComplete(subscriber);
     }
     if (value) {
-      co_yield *value;
+      co_await yielder.Yield(*value);
     }
     co_await WaitForAllConsumed(subscriber);
   }

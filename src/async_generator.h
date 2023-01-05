@@ -152,6 +152,7 @@ struct AsyncGenerator<T>::Promise {
   // Resume execution of the parent to notify it that a new value is available,
   // and then wait for the parent to request a new value.
   auto yield_value(T& new_value) {
+    assert(value == nullptr);
     value = &new_value;
     return Yield();
   }
