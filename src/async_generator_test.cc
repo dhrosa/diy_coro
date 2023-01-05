@@ -116,6 +116,21 @@ TEST(AsyncGeneratorTest, MapWithExtraArguments) {
               ElementsAre(2, 4, 6));
 }
 
+// We should be able to use Yielder to yield values from within a nested
+// function call.
+TEST(AsyncGenerator, Yielder) {
+  auto gen = []() -> AsyncGenerator<int> {
+    co_yield 1;
+    auto inner = [](AsyncGenerator<int>::Yielder yielder) -> Task<> {
+      co_await yielder.Yield(2);
+      co_await yielder.Yield(3);
+    };
+    co_await inner(co_await AsyncGenerator<int>::GetYielder());
+    co_yield 4;
+  };
+  EXPECT_THAT(ToVector(gen()), ElementsAre(1, 2, 3, 4));
+}
+
 TEST(AsyncGeneratorTest, NonDefaultConstructibleType) {
   struct Value {
     Value() = delete;
