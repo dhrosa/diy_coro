@@ -7,6 +7,7 @@
 #include <coroutine>
 #include <iterator>
 #include <list>
+#include <mutex>
 #include <optional>
 #include <ranges>
 #include <stdexcept>
@@ -31,121 +32,109 @@ class Broadcast {
 
 template <typename T>
 struct Broadcast<T>::Subscriber {
-  std::atomic_int phase;
   std::coroutine_handle<> waiting;
+  bool consumed_value = false;
 };
 
 template <typename T>
 struct Broadcast<T>::State {
   AsyncGenerator<T> publisher;
   std::list<Subscriber> subscribers;
-  const T* value = nullptr;
 
-  enum PublisherState : int { kNeedRead, kDeliveryInProgress };
+  std::mutex mutex;
 
-  enum SubscriberPhase : int {
-    kIdle,
+  enum ValuePhase {
     kNeedValue,
+    kReadingValue,
     kHaveValue,
-    kValueSent,
   };
+  ValuePhase value_phase = kNeedValue;
+  Subscriber* leader = nullptr;
+  const T* value;
 
-  std::atomic_int publisher_state;
+  State(AsyncGenerator<T> publisher) : publisher(std::move(publisher)) {}
 
-  std::coroutine_handle<> leader;
-
-  State(AsyncGenerator<T> publisher) : publisher(std::move(publisher)) {
-    publisher_state.store(kNeedRead, std::memory_order::relaxed);
+  AsyncGenerator<const T> Subscription(Subscriber& subscriber) {
+    Subscriber* current_leader;
+    {
+      auto lock = std::lock_guard(mutex);
+      if (leader == nullptr) {
+        leader = &subscriber;
+        value_phase = kReadingValue;
+      }
+      current_leader = leader;
+    }
+    const bool is_leader = current_leader == &subscriber;
+    if (is_leader) {
+      value = co_await publisher;
+      auto lock = std::lock_guard(mutex);
+      value_phase = kHaveValue;
+    } else {
+      // Wait for leader to read value.
+      co_await WaitForReadComplete(subscriber);
+    }
+    if (value) {
+      co_yield *value;
+    }
+    co_await WaitForAllConsumed(subscriber);
   }
 
-  auto WaitForValue(Subscriber& subscriber) {
+  auto WaitForReadComplete(Subscriber& subscriber) {
     struct Awaiter {
       State& state;
       Subscriber& subscriber;
 
-      int previous_phase;
-
-      bool await_ready() {
-        previous_phase = subscriber.phase.load(std::memory_order::acquire);
-        return previous_phase == kHaveValue;
-      }
-
-      bool await_suspend(std::coroutine_handle<> handle) {
-        assert(previous_phase == kIdle);
-        subscriber.waiting = handle;
-        if (subscriber.phase.compare_exchange_strong(
-                previous_phase, kNeedValue, std::memory_order::acq_rel)) {
-          // kIdle -> kNeedValue transition.
-          return true;
-        }
-        // Racing kIdle -> kHaveValue transition. Resume immediately.
-        assert(previous_phase == kHaveValue);
-        return false;
-      }
-
-      void await_resume() {
-        subscriber.phase.store(kHaveValue, std::memory_order::release);
-      }
-    };
-    return Awaiter{*this, subscriber};
-  }
-
-  auto NotifyValue(Subscriber& subscriber) { return std::suspend_always(); }
-
-  auto WaitForAllValuesSent(Subscriber& leader) {
-    struct Awaiter : std::suspend_always {
-      State& state;
-      Subscriber& leader;
+      bool await_ready() { return false; }
 
       std::coroutine_handle<> await_suspend(std::coroutine_handle<> handle) {
-        for (Subscriber& subscriber : state.subscribers) {
-          int previous_phase =
-              subscriber.phase.load(std::memory_order::acquire);
-          if (previous_phase == kIdle) {
-            if (subscriber.phase.compare_exchange_strong(
-                    previous_phase, kHaveValue, std::memory_order::acq_rel)) {
-              // kIdle -> kHaveValue transition.
-              continue;
-            } else {
-              // Racing kIdle -> kNeedValue transition.
-              assert(previous_phase == kNeedValue);
-              return std::exchange(subscriber.waiting, nullptr);
-            }
-          } else if (previous_phase == kNeedValue) {
-            return std::exchange(subscriber.waiting, nullptr);
-          }
+        auto lock = std::lock_guard(state.mutex);
+        if (state.value_phase == kHaveValue) {
+          return handle;
         }
+        subscriber.waiting = handle;
         return std::noop_coroutine();
       }
+
+      void await_resume() {}
     };
 
-    return Awaiter{.state = *this, .leader = leader};
+    return Awaiter(*this, subscriber);
   }
 
-  AsyncGenerator<const T> Subscription(Subscriber& subscriber) {
-    while (true) {
-      int previous_state = kNeedRead;
-      if (publisher_state.compare_exchange_strong(previous_state,
-                                                  kDeliveryInProgress,
-                                                  std::memory_order::acq_rel)) {
-        // Successful kNeedRead -> kReadInProgress transition; we've won
-        // election to retrieve next publisher value.
-        subscriber.phase.store(kNeedValue, std::memory_order::release);
-        value = co_await publisher;
-        subscriber.phase.store(kHaveValue, std::memory_order::release);
-      } else {
-        // Another subscriber raced against us; wait for it to give us the
-        // value.
-        co_await WaitForValue(subscriber);
+  auto WaitForAllConsumed(Subscriber& subscriber) {
+    struct Awaiter {
+      State& state;
+      Subscriber& subscriber;
+
+      bool await_ready() { return false; }
+
+      std::coroutine_handle<> await_suspend(std::coroutine_handle<> handle) {
+        auto lock = std::lock_guard(state.mutex);
+        subscriber.waiting = handle;
+        bool all_consumed = true;
+        // Find a subscriber that is waiting to consume the new value.
+        for (Subscriber& s : state.subscribers) {
+          if (s.consumed_value) {
+            continue;
+          }
+          all_consumed = false;
+          if (s.waiting) {
+            return std::exchange(s.waiting, nullptr);
+          }
+          // No waiting coroutine means the co_yield call has not yet returned
+          // control back to the subscriber. Try another subscriber.
+        }
+        if (all_consumed) {
+          return std::exchange(state.leader->waiting, nullptr);
+        }
+        // There's at least one subscriber whose co_yield is still in-progress.
+        return std::noop_coroutine();
       }
-      if (value) {
-        co_yield *value;
-      }
-      co_await WaitForAllValuesSent(subscriber);
-      if (value == nullptr) {
-        co_return;
-      }
-    }
+
+      void await_resume() {}
+    };
+
+    return Awaiter{*this, subscriber};
   }
 };
 

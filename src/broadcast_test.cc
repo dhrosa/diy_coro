@@ -8,6 +8,7 @@
 #include "diy/coro/task.h"
 
 using testing::Eq;
+using testing::Optional;
 using testing::Pointee;
 
 AsyncGenerator<int> IotaPublisher() {
@@ -16,8 +17,8 @@ AsyncGenerator<int> IotaPublisher() {
   }
 }
 
-std::optional<int> NextValue(AsyncGenerator<int>& generator) {
-  int* value = Task(generator).Wait();
+std::optional<int> NextValue(AsyncGenerator<const int>& generator) {
+  const int* value = Task(generator).Wait();
   if (value == nullptr) {
     return std::nullopt;
   }
@@ -32,4 +33,6 @@ TEST(BroadcastTest, SingleSubscriber) {
   Broadcast<int> broadcast(IotaPublisher());
 
   auto s = broadcast.Subscribe();
+
+  EXPECT_THAT(NextValue(s), Optional(0));
 }
