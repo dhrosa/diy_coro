@@ -50,6 +50,8 @@ TEST(BroadcastTest, MultipleSubscribers) {
   EXPECT_THAT(NextValue(b), Optional(0));
   EXPECT_THAT(NextValue(c), Optional(0));
 
+  // Try different interleavings of subscriber pulls to make sure there isn't an
+  // accidental depedency on a specific ordering.
   EXPECT_THAT(NextValue(c), Optional(1));
   EXPECT_THAT(NextValue(b), Optional(1));
   EXPECT_THAT(NextValue(a), Optional(1));
