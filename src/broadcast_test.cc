@@ -7,6 +7,7 @@
 
 #include "diy/coro/task.h"
 
+using testing::ElementsAre;
 using testing::Eq;
 using testing::Optional;
 using testing::Pointee;
@@ -59,4 +60,42 @@ TEST(BroadcastTest, MultipleSubscribers) {
   EXPECT_THAT(NextValue(b), Optional(2));
   EXPECT_THAT(NextValue(c), Optional(2));
   EXPECT_THAT(NextValue(a), Optional(2));
+}
+
+std::vector<int> ToVector(AsyncGenerator<const int>& gen) {
+  return [](AsyncGenerator<const int>& gen) -> Task<std::vector<int>> {
+    std::vector<int> out;
+    while (const int* value = co_await gen) {
+      out.push_back(*value);
+    }
+    co_return out;
+  }(gen)
+                                                   .Wait();
+}
+
+TEST(BroadcastTest, SingleSubscriberFinite) {
+  Broadcast<int> broadcast([]() -> AsyncGenerator<int> {
+    co_yield 1;
+    co_yield 2;
+    co_yield 3;
+  }());
+
+  auto s = broadcast.Subscribe();
+  EXPECT_THAT(ToVector(s), ElementsAre(1, 2, 3));
+}
+
+TEST(BroadcastTest, MultipleSubscriberFinite) {
+  Broadcast<int> broadcast([]() -> AsyncGenerator<int> {
+    co_yield 1;
+    co_yield 2;
+    co_yield 3;
+  }());
+
+  auto a = broadcast.Subscribe();
+  auto b = broadcast.Subscribe();
+  auto c = broadcast.Subscribe();
+
+  EXPECT_THAT(ToVector(a), ElementsAre(1, 2, 3));
+  EXPECT_THAT(ToVector(b), ElementsAre(1, 2, 3));
+  EXPECT_THAT(ToVector(c), ElementsAre(1, 2, 3));
 }
