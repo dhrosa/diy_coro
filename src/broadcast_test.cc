@@ -35,4 +35,26 @@ TEST(BroadcastTest, SingleSubscriber) {
   auto s = broadcast.Subscribe();
 
   EXPECT_THAT(NextValue(s), Optional(0));
+  EXPECT_THAT(NextValue(s), Optional(1));
+  EXPECT_THAT(NextValue(s), Optional(2));
+}
+
+TEST(BroadcastTest, MultipleSubscribers) {
+  Broadcast<int> broadcast(IotaPublisher());
+
+  auto a = broadcast.Subscribe();
+  auto b = broadcast.Subscribe();
+  auto c = broadcast.Subscribe();
+
+  EXPECT_THAT(NextValue(a), Optional(0));
+  EXPECT_THAT(NextValue(b), Optional(0));
+  EXPECT_THAT(NextValue(c), Optional(0));
+
+  EXPECT_THAT(NextValue(c), Optional(1));
+  EXPECT_THAT(NextValue(b), Optional(1));
+  EXPECT_THAT(NextValue(a), Optional(1));
+
+  EXPECT_THAT(NextValue(b), Optional(2));
+  EXPECT_THAT(NextValue(c), Optional(2));
+  EXPECT_THAT(NextValue(a), Optional(2));
 }

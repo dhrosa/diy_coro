@@ -8,6 +8,7 @@
 #include <iterator>
 #include <list>
 #include <mutex>
+#include <queue>
 #include <optional>
 #include <ranges>
 #include <stdexcept>
@@ -34,7 +35,8 @@ template <typename T>
 struct Broadcast<T>::Subscriber {
   std::optional<typename AsyncGenerator<const T>::Yielder> yielder;
   std::coroutine_handle<> waiting;
-  bool consumed_value = false;
+
+  std::queue<std::shared_ptr<const T>> values;
 };
 
 template <typename T>
@@ -43,50 +45,66 @@ struct Broadcast<T>::State {
   std::list<Subscriber> subscribers;
 
   std::mutex mutex;
-
-  enum ValuePhase {
-    kNeedValue,
-    kReadingValue,
-    kHaveValue,
-  };
-  ValuePhase value_phase = kNeedValue;
-  Subscriber* leader = nullptr;
-  const T* value;
+  bool read_in_progress = false;
 
   State(AsyncGenerator<T> publisher) : publisher(std::move(publisher)) {}
 
   AsyncGenerator<const T> Subscription(Subscriber& subscriber) {
-    co_await FirstValue(subscriber,
-                        co_await AsyncGenerator<const T>::GetYielder());
+    subscriber.yielder = co_await AsyncGenerator<const T>::GetYielder();
+    while (true) {
+      co_await SubscriptionRound(subscriber);
+    }
   }
 
-  Task<> FirstValue(Subscriber& subscriber,
-                    AsyncGenerator<const T>::Yielder yielder) {
-    Subscriber* current_leader;
-    {
-      auto lock = std::lock_guard(mutex);
-      if (leader == nullptr) {
-        leader = &subscriber;
-        value_phase = kReadingValue;
+  Task<bool> ConsumeAllCurrentValues(Subscriber& subscriber) {
+    while (true) {
+      std::shared_ptr<const T> value;
+      {
+        auto lock = std::lock_guard(mutex);
+        if (subscriber.values.empty()) {
+          if (not read_in_progress) {
+            read_in_progress = true;
+            co_return true;
+          }
+          co_return false;
+        }
+        value = std::move(subscriber.values.front());
+        subscriber.values.pop();
       }
-      current_leader = leader;
-      subscriber.yielder = yielder;
+      if (value) {
+        co_await subscriber.yielder->Yield(*value);
+      } else {
+        co_return false;
+      }
     }
-    const bool is_leader = current_leader == &subscriber;
-    if (is_leader) {
-      value = co_await publisher;
-      auto lock = std::lock_guard(mutex);
-      value_phase = kHaveValue;
-    } else {
-      co_await WaitForReadComplete(subscriber);
-    }
-    if (value) {
-      co_await yielder.Yield(*value);
-    }
-    co_await WaitForAllConsumed(subscriber);
   }
 
-  auto WaitForReadComplete(Subscriber& subscriber) {
+  Task<> SubscriptionRound(Subscriber& subscriber) {
+    const bool is_leader = co_await ConsumeAllCurrentValues(subscriber);
+    if (is_leader) {
+      T* const raw_value = co_await publisher;
+      std::shared_ptr<const T> value =
+          raw_value ? std::make_shared<const T>(std::move(*raw_value))
+                    : nullptr;
+      std::vector<std::coroutine_handle<>> to_wake;
+      {
+        auto lock = std::lock_guard(mutex);
+        for (Subscriber& s : subscribers) {
+          s.values.push(value);
+          if (s.waiting) {
+            to_wake.push_back(std::exchange(s.waiting, nullptr));
+          }
+        }
+        read_in_progress = false;
+      }
+      for (std::coroutine_handle<> handle : to_wake) {
+        handle.resume();
+      }
+    }
+    co_await NextValue(subscriber);
+  }
+
+  auto NextValue(Subscriber& subscriber) {
     struct Awaiter {
       State& state;
       Subscriber& subscriber;
@@ -95,10 +113,12 @@ struct Broadcast<T>::State {
 
       std::coroutine_handle<> await_suspend(std::coroutine_handle<> handle) {
         auto lock = std::lock_guard(state.mutex);
-        if (state.value_phase == kHaveValue) {
-          return handle;
-        }
         subscriber.waiting = handle;
+        for (Subscriber& s : state.subscribers) {
+          if (!s.values.empty() && s.waiting) {
+            return std::exchange(s.waiting, nullptr);
+          }
+        }
         return std::noop_coroutine();
       }
 
@@ -106,42 +126,6 @@ struct Broadcast<T>::State {
     };
 
     return Awaiter(*this, subscriber);
-  }
-
-  auto WaitForAllConsumed(Subscriber& subscriber) {
-    struct Awaiter {
-      State& state;
-      Subscriber& subscriber;
-
-      bool await_ready() { return false; }
-
-      std::coroutine_handle<> await_suspend(std::coroutine_handle<> handle) {
-        auto lock = std::lock_guard(state.mutex);
-        subscriber.waiting = handle;
-        bool all_consumed = true;
-        // Find a subscriber that is waiting to consume the new value.
-        for (Subscriber& s : state.subscribers) {
-          if (s.consumed_value) {
-            continue;
-          }
-          all_consumed = false;
-          if (s.waiting) {
-            return std::exchange(s.waiting, nullptr);
-          }
-          // No waiting coroutine means the co_yield call has not yet returned
-          // control back to the subscriber. Try another subscriber.
-        }
-        if (all_consumed) {
-          return std::exchange(state.leader->waiting, nullptr);
-        }
-        // There's at least one subscriber whose co_yield is still in-progress.
-        return std::noop_coroutine();
-      }
-
-      void await_resume() {}
-    };
-
-    return Awaiter{*this, subscriber};
   }
 };
 
