@@ -18,10 +18,17 @@ if(PROJECT_IS_TOP_LEVEL)
     -gcolumn-info
     -Wall
     -Werror
-    -fno-omit-frame-pointer
-    -fno-optimize-sibling-calls
-    -fsanitize=thread)
-  add_link_options(-fsanitize=thread -latomic)
+    -fno-omit-frame-pointer)
+  add_link_options(-latomic)
+
+  option(DIY_ENABLE_TSAN "Enable TSAN instrumentation." ON)
+  if(DIY_ENABLE_TSAN)
+    message(STATUS "TSAN enabled")
+    add_compile_options(-fsanitize=thread)
+    add_link_options(-fsanitize=thread)
+  else()
+    message(STATUS "TSAN disabled")
+  endif()
 
   include(FetchContent)
 
