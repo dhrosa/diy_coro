@@ -1,7 +1,5 @@
 #pragma once
 
-#include <absl/log/log.h>
-
 #include <cassert>
 #include <optional>
 #include <ranges>
@@ -133,14 +131,10 @@ struct AsyncGenerator<T>::Promise {
       std::coroutine_handle<> await_suspend(std::coroutine_handle<> handle) {
         promise.generator_handle = handle;
         if (promise.parent) {
-          LOG(INFO) << "Yield await_suspend() resuming parent.";
           return std::exchange(promise.parent, nullptr);
         }
-        LOG(INFO) << "Yield await_suspend() doing nothing.";
         return std::noop_coroutine();
       }
-
-      void await_resume() noexcept { LOG(INFO) << "Yield await_resume()."; }
     };
     return Awaiter{.promise = *this};
   }
@@ -201,13 +195,11 @@ traits::HasAwaitResult<T*> auto AsyncGenerator<T>::operator()() {
 
     std::coroutine_handle<> await_suspend(
         std::coroutine_handle<> parent) noexcept {
-      LOG(INFO) << "AdvanceAwaiter await_suspend() resuming generator.";
       generator->promise().parent = parent;
       return generator->promise().generator_handle;
     }
 
     T* await_resume() {
-      LOG(INFO) << "AdvanceAwaiter await_resume().";
       auto& promise = generator->promise();
       if (promise.exception) {
         std::rethrow_exception(promise.exception);
