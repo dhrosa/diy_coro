@@ -12,6 +12,7 @@
 #include <queue>
 #include <ranges>
 #include <stdexcept>
+#include <variant>
 
 #include "diy/coro/async_generator.h"
 #include "diy/coro/intrusive_linked_list.h"
@@ -20,7 +21,8 @@
 
 // Single-publisher multiple-subscriber message dispatching network.
 //
-// TODO(dhrosa): Exceptions raiesd by `publisher` aren't handled yet.
+// TODO(dhrosa): Exceptions raiesd by `publisher` currently work correctly for
+// single subscribers, but not multiple.
 template <typename T>
 class Broadcast {
  public:
@@ -40,6 +42,12 @@ class Broadcast {
   struct State;
   struct Subscriber;
 
+  // Values can either be a shared reference to a value yielded by `publisher`,
+  // an end-of-stream "Exhausted" signal, or an exception raised by `publisher`.
+  struct Exhausted {};
+  using Value =
+      std::variant<std::shared_ptr<const T>, Exhausted, std::exception_ptr>;
+
   State state_;
 };
 
@@ -53,7 +61,7 @@ struct Broadcast<T>::Subscriber {
   std::coroutine_handle<> waiting;
 
   // Values not yet consumed by this subscriber.
-  std::queue<std::shared_ptr<const T>> values;
+  std::queue<Value> values;
 };
 
 template <typename T>
@@ -89,7 +97,7 @@ struct Broadcast<T>::State {
   // the next round.
   Task<ConsumeResult> ConsumeAllCurrentValues(Subscriber& subscriber) {
     while (true) {
-      std::shared_ptr<const T> value;
+      Value variant = Exhausted{};
       {
         auto lock = std::lock_guard(mutex);
         if (subscriber.values.empty()) {
@@ -100,13 +108,16 @@ struct Broadcast<T>::State {
           read_in_progress = true;
           co_return kReadNewValue;
         }
-        value = std::move(subscriber.values.front());
+        variant = std::move(subscriber.values.front());
         subscriber.values.pop();
       }
-      if (value) {
-        co_await subscriber.yielder->Yield(*value);
-      } else {
+      if (std::holds_alternative<Exhausted>(variant)) {
         co_return kExhausted;
+      } else if (auto* exception = std::get_if<std::exception_ptr>(&variant)) {
+        std::rethrow_exception(*exception);
+      } else if (auto* value =
+                     std::get_if<std::shared_ptr<const T>>(&variant)) {
+        co_await subscriber.yielder->Yield(**value);
       }
     }
   }

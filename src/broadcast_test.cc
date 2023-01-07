@@ -62,6 +62,18 @@ TEST(BroadcastTest, MultipleSubscribers) {
   EXPECT_THAT(NextValue(a), Optional(2));
 }
 
+TEST(BroadcastTest, SingleSubscriberForwardsException) {
+  Broadcast<int> broadcast([]() -> AsyncGenerator<int> {
+    co_yield 1;
+    throw std::logic_error("fake error");
+  }());
+
+  auto s = broadcast.Subscribe();
+
+  EXPECT_THAT(NextValue(s), Optional(1));
+  EXPECT_THROW(NextValue(s), std::logic_error);
+}
+
 std::vector<int> ToVector(AsyncGenerator<const int>& gen) {
   return [](AsyncGenerator<const int>& gen) -> Task<std::vector<int>> {
     std::vector<int> out;
