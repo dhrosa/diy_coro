@@ -32,6 +32,12 @@ if(PROJECT_IS_TOP_LEVEL)
     GIT_TAG 522606b7fae37836c138e83f6eec0eabb9947dc0
     GIT_PROGRESS ON)
 
+  set(BENCHMARK_ENABLE_TESTING OFF)
+  FetchContent_Declare(
+    benchmark
+    GIT_REPOSITORY https://github.com/google/benchmark.git
+    GIT_TAG v1.7.1)
+
   FetchContent_Declare(
     googletest
     GIT_REPOSITORY https://github.com/google/googletest.git
@@ -39,7 +45,7 @@ if(PROJECT_IS_TOP_LEVEL)
     GIT_PROGRESS ON
     GIT_SHALLOW ON)
 
-  FetchContent_MakeAvailable(absl googletest)
+  FetchContent_MakeAvailable(absl benchmark googletest)
 
   include(GoogleTest)
   enable_testing()

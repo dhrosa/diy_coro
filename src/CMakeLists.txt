@@ -26,6 +26,8 @@ diy_cc_library(resume AUTO)
 
 diy_cc_library(task AUTO LIBRARIES traits)
 diy_cc_test(task_test AUTO)
+diy_cc_binary(task_benchmark AUTO LIBRARIES benchmark::benchmark
+                                            benchmark::benchmark_main)
 
 diy_cc_library(generator AUTO)
 diy_cc_test(generator_test AUTO)

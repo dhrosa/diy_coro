@@ -182,7 +182,9 @@ struct AsyncGenerator<T>::Promise {
   }
 
   template <typename U>
-  decltype(auto) await_transform(U&& x) { return std::forward<U>(x); }
+  decltype(auto) await_transform(U&& x) {
+    return std::forward<U>(x);
+  }
 };
 
 template <typename T>
