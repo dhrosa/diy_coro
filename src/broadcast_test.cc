@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <optional>
+#include <thread>
 
 #include "diy/coro/task.h"
 
@@ -110,4 +111,25 @@ TEST(BroadcastTest, MultipleSubscriberFinite) {
   EXPECT_THAT(ToVector(a), ElementsAre(1, 2, 3));
   EXPECT_THAT(ToVector(b), ElementsAre(1, 2, 3));
   EXPECT_THAT(ToVector(c), ElementsAre(1, 2, 3));
+}
+
+TEST(BroadcastTest, Threaded) {
+  Broadcast<int> broadcast([]() -> AsyncGenerator<int> {
+    co_yield 1;
+    co_yield 2;
+    co_yield 3;
+  }());
+
+  auto a = broadcast.Subscribe();
+  auto b = broadcast.Subscribe();
+
+  auto subscriber_thread = [](AsyncGenerator<const int> gen) {
+    EXPECT_THAT(ToVector(gen), ElementsAre(1, 2, 3));
+  };
+
+  std::jthread thread_a(subscriber_thread, std::move(a));
+  std::jthread thread_b(subscriber_thread, std::move(b));
+
+  thread_a.join();
+  thread_b.join();
 }
