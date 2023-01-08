@@ -37,6 +37,9 @@ diy_cc_test(async_generator_test AUTO LIBRARIES task generator)
 diy_cc_binary(async_generator_benchmark AUTO
               LIBRARIES benchmark::benchmark benchmark::benchmark_main)
 
+diy_cc_library(async_queue AUTO)
+diy_cc_test(async_queue_test AUTO)
+
 diy_cc_library(executor AUTO LIBRARIES absl::synchronization absl::time)
 diy_cc_test(executor_test AUTO LIBRARIES task)
 

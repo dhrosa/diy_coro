@@ -12,7 +12,7 @@ endif()
 
 if(PROJECT_IS_TOP_LEVEL)
   add_compile_options(
-    -O0
+    -Og
     -g3
     -ggdb
     -gcolumn-info
