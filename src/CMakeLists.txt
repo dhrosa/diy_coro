@@ -55,7 +55,16 @@ diy_cc_test(event_test AUTO LIBRARIES task)
 
 # Top-level target for public consumption.
 add_library(diy_coro INTERFACE)
-target_link_libraries(diy_coro INTERFACE traits handle task generator
-                                         async_generator executor)
+target_link_libraries(
+  diy_coro
+  INTERFACE async_generator
+            async_queue
+            broadcast
+            event
+            executor
+            generator
+            handle
+            task
+            traits)
 target_include_directories(diy_coro
                            INTERFACE "${CMAKE_CURRENT_BINARY_DIR}/include")
