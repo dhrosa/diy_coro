@@ -1,7 +1,7 @@
 #include <benchmark/benchmark.h>
 
-#include "async_generator.h"
-#include "task.h"
+#include "diy/coro/async_generator.h"
+#include "diy/coro/task.h"
 
 constexpr int kBatchSize = 100'000;
 
