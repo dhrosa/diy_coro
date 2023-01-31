@@ -72,9 +72,4 @@ else()
   set(BUILD_TESTING OFF)
 endif()
 
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-include(Diy)
-set(diy_package_name
-    diy_coro
-    CACHE INTERNAL "")
 add_subdirectory(src)
