@@ -21,6 +21,7 @@ set(tests
     async_generator_test.cc
     async_queue_test.cc
     broadcast_test.cc
+    container_generator_test.cc
     event_test.cc
     executor_test.cc
     generator_test.cc
