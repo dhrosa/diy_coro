@@ -26,7 +26,8 @@ set(tests
     task_test.cc
     traits_test.cc)
 
-set(benchmarks async_generator_benchmark.cc task_benchmark.cc)
+set(benchmarks async_generator_benchmark.cc container_generator_benchmark.cc
+               task_benchmark.cc)
 
 # Copy header files into build tree to allow importing from "diy/coro/" without
 # importing an awkward directory structure onto this project. This also lets
