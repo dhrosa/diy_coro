@@ -10,8 +10,6 @@ set(headers
     executor.h
     generator.h
     handle.h
-    intrusive_linked_list.h
-    resume.h
     task.h
     traits.h)
 
@@ -25,7 +23,6 @@ set(tests
     event_test.cc
     executor_test.cc
     generator_test.cc
-    intrusive_linked_list_test.cc
     task_test.cc
     traits_test.cc)
 
