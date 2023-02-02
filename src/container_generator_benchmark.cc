@@ -11,10 +11,12 @@ std::vector<int> VectorRoutine(int n) {
   return values;
 }
 
-VectorGenerator<int> VectorCoroutine(int n) {
-  for (int i = 0; i < n; ++i) {
-    co_yield i;
-  }
+std::vector<int> VectorCoroutine(int n) {
+  return [n]() -> VectorGenerator<int> {
+    for (int i = 0; i < n; ++i) {
+      co_yield i;
+    }
+  }();
 }
 
 constexpr int kVectorSize = 1'000;
@@ -29,7 +31,7 @@ static void BM_VectorRoutine(benchmark::State& state) {
 
 static void BM_VectorCoroutine(benchmark::State& state) {
   for (auto _ : state) {
-    benchmark::DoNotOptimize(std::vector<int>(VectorCoroutine(kVectorSize)));
+    benchmark::DoNotOptimize(VectorCoroutine(kVectorSize));
   }
   state.SetItemsProcessed(kVectorSize * state.iterations());
 }
