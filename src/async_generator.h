@@ -78,24 +78,6 @@ class AsyncGenerator {
     Promise* promise_;
   };
 
-  // Allows AsyncGenerator to be iterated over as an input range in a
-  // non-coroutine-context.
-  class SyncRange : std::ranges::view_base {
-   public:
-    class Iterator;
-
-    using value_type = T;
-    Iterator begin() const { return ++Iterator(generator_); }
-    Iterator end() const { return Iterator(generator_); }
-
-   private:
-    friend class AsyncGenerator;
-    SyncRange(AsyncGenerator* generator) : generator_(generator) {}
-    AsyncGenerator* generator_;
-  };
-
-  SyncRange ToSyncRange() { return SyncRange(this); }
-
  private:
   AsyncGenerator(Handle handle) : handle_(std::move(handle)) {}
 
@@ -249,34 +231,3 @@ template <typename T>
 traits::HasAwaitResult<T*> auto AsyncGenerator<T>::operator co_await() {
   return traits::ToAwaiter((*this)());
 }
-
-// Input iterator for SyncRange.
-template <typename T>
-class AsyncGenerator<T>::SyncRange::Iterator {
- public:
-  using value_type = T;
-  using difference_type = std::ptrdiff_t;
-  using iterator_category = std::input_iterator_tag;
-
-  Iterator() = default;
-
-  T& operator*() const { return *value_; }
-  T* operator->() const { return value_; }
-  Iterator& operator++() {
-    value_ = Task(*generator_).Wait();
-    return *this;
-  }
-  Iterator operator++(int) {
-    Iterator old = *this;
-    ++(*this);
-    return old;
-  }
-  bool operator==(Iterator) const { return value_ == nullptr; }
-
- private:
-  friend class SyncRange;
-  Iterator(AsyncGenerator* generator) : generator_(generator) {}
-
-  AsyncGenerator* generator_;
-  T* value_;
-};

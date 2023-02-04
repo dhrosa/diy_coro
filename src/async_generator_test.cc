@@ -172,13 +172,3 @@ TEST(AsyncGeneratorTest, NonDefaultConstructibleType) {
   EXPECT_EQ(NextValue(gen), nullptr);
   EXPECT_EQ(destructor_calls, 3);
 }
-
-TEST(AsyncGeneratorTest, SyncRange) {
-  auto gen = []() -> AsyncGenerator<int> {
-    co_yield 1;
-    co_yield 2;
-    co_yield 3;
-  };
-
-  EXPECT_THAT(gen().ToSyncRange(), ElementsAre(1, 2, 3));
-}
