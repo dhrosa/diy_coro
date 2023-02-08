@@ -6,6 +6,7 @@
 #include <ranges>
 #include <stdexcept>
 #include <type_traits>
+#include <vector>
 
 #include "diy/coro/handle.h"
 #include "diy/coro/resume.h"
@@ -39,20 +40,19 @@ class AsyncGenerator {
   AsyncGenerator(AsyncGenerator&&) = default;
   AsyncGenerator& operator=(AsyncGenerator&&) = default;
 
-  // Resumes the coroutine until it hands control back to the caller after its
-  // first suspension. Calling this method after calling any other methods of
-  // this coroutine is undefined behavior.
-  void WaitForFirstSuspension() { handle_->resume(); }
-
-  void Resume() { return handle_->resume(); }
-
   // Awaitable that attempts to produce the next value in the sequence. Returns
   // nullptr if there are no more values, or returns the next value. Any
   // exceptions raised raised by the generator body are raised here.
-  traits::HasAwaitResult<T*> auto operator()();
 
   // Makes AsyncGneerator awaitable as if by awaiting on operator().
   traits::HasAwaitResult<T*> auto operator co_await();
+
+  // Equivalent to the above, but in a non-coroutine context.
+  T* Wait() { return Task(*this).Wait(); }
+
+  // Synchronously collect all elements into an std::vector.
+  using Vector = std::vector<std::remove_const_t<T>>;
+  Vector ToVector();
 
   // Creates a new AsyncGenerator whose values are the result of applying `f` to
   // each value of the current generator.
@@ -161,8 +161,8 @@ struct AsyncGenerator<T>::Promise {
 
   // Note: Even though this overload directly matches against T&&, it will also
   // match (const T&), (T), and (U&&), where U is implicitly converitble to T.
-  // Any T&& temporaries created as a result of implicit conversion are created
-  // by the calling coroutine and will be kept alive across the suspension
+  // Any T&& temporaries created as a result of implicit conversion are cre ated
+  // by the calling coroutine and will be kept alive across the suspension'0
   // point.
   auto yield_value(T&& new_value) {
     return yield_value(static_cast<T&>(new_value));
@@ -184,7 +184,7 @@ struct AsyncGenerator<T>::Promise {
 };
 
 template <typename T>
-traits::HasAwaitResult<T*> auto AsyncGenerator<T>::operator()() {
+traits::HasAwaitResult<T*> auto AsyncGenerator<T>::operator co_await() {
   // Resumes execution of the coroutine body to produce the next value of the
   // sequence.
   struct AdvanceAwaiter {
@@ -216,6 +216,18 @@ traits::HasAwaitResult<T*> auto AsyncGenerator<T>::operator()() {
 }
 
 template <typename T>
+auto AsyncGenerator<T>::ToVector() -> Vector {
+  return [](auto& gen) -> Task<Vector> {
+    Vector out;
+    while (T* value = co_await gen) {
+      out.emplace_back(std::move(*value));
+    }
+    co_return std::move(out);
+  }(*this)
+                              .Wait();
+}
+
+template <typename T>
 template <typename F, typename... Args>
 auto AsyncGenerator<T>::Map(
     F&& f, Args&&... args) && -> AsyncGenerator<MapResult<F, Args...>> {
@@ -225,9 +237,4 @@ auto AsyncGenerator<T>::Map(
       co_yield f(std::move(*value), args...);
     }
   }(std::move(*this), std::move(f), std::move(args)...);
-}
-
-template <typename T>
-traits::HasAwaitResult<T*> auto AsyncGenerator<T>::operator co_await() {
-  return traits::ToAwaiter((*this)());
 }

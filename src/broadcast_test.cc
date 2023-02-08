@@ -6,25 +6,17 @@
 #include <optional>
 #include <thread>
 
+#include "diy/coro/container_generator.h"
 #include "diy/coro/task.h"
 
 using testing::ElementsAre;
 using testing::Eq;
-using testing::Optional;
 using testing::Pointee;
 
 AsyncGenerator<int> IotaPublisher() {
   for (int i = 0;; ++i) {
     co_yield i;
   }
-}
-
-std::optional<int> NextValue(AsyncGenerator<const int>& generator) {
-  const int* value = Task(generator).Wait();
-  if (value == nullptr) {
-    return std::nullopt;
-  }
-  return *value;
 }
 
 TEST(BroadcastTest, NoSubscribers) {
@@ -36,9 +28,9 @@ TEST(BroadcastTest, SingleSubscriber) {
 
   auto s = broadcast.Subscribe();
 
-  EXPECT_THAT(NextValue(s), Optional(0));
-  EXPECT_THAT(NextValue(s), Optional(1));
-  EXPECT_THAT(NextValue(s), Optional(2));
+  EXPECT_THAT(s.Wait(), Pointee(0));
+  EXPECT_THAT(s.Wait(), Pointee(1));
+  EXPECT_THAT(s.Wait(), Pointee(2));
 }
 
 TEST(BroadcastTest, MultipleSubscribers) {
@@ -48,19 +40,19 @@ TEST(BroadcastTest, MultipleSubscribers) {
   auto b = broadcast.Subscribe();
   auto c = broadcast.Subscribe();
 
-  EXPECT_THAT(NextValue(a), Optional(0));
-  EXPECT_THAT(NextValue(b), Optional(0));
-  EXPECT_THAT(NextValue(c), Optional(0));
+  EXPECT_THAT(a.Wait(), Pointee(0));
+  EXPECT_THAT(b.Wait(), Pointee(0));
+  EXPECT_THAT(c.Wait(), Pointee(0));
 
   // Try different interleavings of subscriber pulls to make sure there isn't an
   // accidental depedency on a specific ordering.
-  EXPECT_THAT(NextValue(c), Optional(1));
-  EXPECT_THAT(NextValue(b), Optional(1));
-  EXPECT_THAT(NextValue(a), Optional(1));
+  EXPECT_THAT(c.Wait(), Pointee(1));
+  EXPECT_THAT(b.Wait(), Pointee(1));
+  EXPECT_THAT(a.Wait(), Pointee(1));
 
-  EXPECT_THAT(NextValue(b), Optional(2));
-  EXPECT_THAT(NextValue(c), Optional(2));
-  EXPECT_THAT(NextValue(a), Optional(2));
+  EXPECT_THAT(b.Wait(), Pointee(2));
+  EXPECT_THAT(c.Wait(), Pointee(2));
+  EXPECT_THAT(a.Wait(), Pointee(2));
 }
 
 TEST(BroadcastTest, SingleSubscriberForwardsException) {
@@ -71,19 +63,8 @@ TEST(BroadcastTest, SingleSubscriberForwardsException) {
 
   auto s = broadcast.Subscribe();
 
-  EXPECT_THAT(NextValue(s), Optional(1));
-  EXPECT_THROW(NextValue(s), std::logic_error);
-}
-
-std::vector<int> ToVector(AsyncGenerator<const int>& gen) {
-  return [](AsyncGenerator<const int>& gen) -> Task<std::vector<int>> {
-    std::vector<int> out;
-    while (const int* value = co_await gen) {
-      out.push_back(*value);
-    }
-    co_return out;
-  }(gen)
-                                                   .Wait();
+  EXPECT_THAT(s.Wait(), Pointee(1));
+  EXPECT_THROW(s.Wait(), std::logic_error);
 }
 
 TEST(BroadcastTest, SingleSubscriberFinite) {
@@ -94,7 +75,7 @@ TEST(BroadcastTest, SingleSubscriberFinite) {
   }());
 
   auto s = broadcast.Subscribe();
-  EXPECT_THAT(ToVector(s), ElementsAre(1, 2, 3));
+  EXPECT_THAT(s.ToVector(), ElementsAre(1, 2, 3));
 }
 
 TEST(BroadcastTest, MultipleSubscriberFinite) {
@@ -108,9 +89,9 @@ TEST(BroadcastTest, MultipleSubscriberFinite) {
   auto b = broadcast.Subscribe();
   auto c = broadcast.Subscribe();
 
-  EXPECT_THAT(ToVector(a), ElementsAre(1, 2, 3));
-  EXPECT_THAT(ToVector(b), ElementsAre(1, 2, 3));
-  EXPECT_THAT(ToVector(c), ElementsAre(1, 2, 3));
+  EXPECT_THAT(a.ToVector(), ElementsAre(1, 2, 3));
+  EXPECT_THAT(b.ToVector(), ElementsAre(1, 2, 3));
+  EXPECT_THAT(c.ToVector(), ElementsAre(1, 2, 3));
 }
 
 TEST(BroadcastTest, Threaded) {
@@ -124,7 +105,7 @@ TEST(BroadcastTest, Threaded) {
   auto b = broadcast.Subscribe();
 
   auto subscriber_thread = [](AsyncGenerator<const int> gen) {
-    EXPECT_THAT(ToVector(gen), ElementsAre(1, 2, 3));
+    EXPECT_THAT(gen.ToVector(), ElementsAre(1, 2, 3));
   };
 
   std::jthread thread_a(subscriber_thread, std::move(a));

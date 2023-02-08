@@ -48,6 +48,11 @@ struct VectorGenerator<T>::Promise {
   void unhandled_exception() { exception = std::current_exception(); }
 
   auto final_suspend() noexcept { return std::suspend_always{}; }
+
+  // Disallow co_await within the coroutine body; generators must be
+  // synchronous.
+  template <typename A>
+  auto await_transform(A&&) = delete;
 };
 
 template <typename T>

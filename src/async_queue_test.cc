@@ -11,11 +11,6 @@ using testing::ElementsAre;
 using testing::Eq;
 using testing::Pointee;
 
-template <typename T>
-T* NextValue(AsyncGenerator<T>& gen) {
-  return Task(gen).Wait();
-}
-
 TEST(AsyncQueueTest, PushBeforePop) {
   AsyncQueue<int> queue;
   queue.Push(1);
@@ -24,9 +19,9 @@ TEST(AsyncQueueTest, PushBeforePop) {
 
   auto gen = queue.Values();
 
-  EXPECT_THAT(NextValue(gen), Pointee(1));
-  EXPECT_THAT(NextValue(gen), Pointee(2));
-  EXPECT_THAT(NextValue(gen), Pointee(3));
+  EXPECT_THAT(gen.Wait(), Pointee(1));
+  EXPECT_THAT(gen.Wait(), Pointee(2));
+  EXPECT_THAT(gen.Wait(), Pointee(3));
 }
 
 TEST(AsyncQueueTest, ConcurrentPushPop) {
@@ -40,9 +35,9 @@ TEST(AsyncQueueTest, ConcurrentPushPop) {
 
   auto gen = queue.Values();
 
-  EXPECT_THAT(NextValue(gen), Pointee(1));
-  EXPECT_THAT(NextValue(gen), Pointee(2));
-  EXPECT_THAT(NextValue(gen), Pointee(3));
+  EXPECT_THAT(gen.Wait(), Pointee(1));
+  EXPECT_THAT(gen.Wait(), Pointee(2));
+  EXPECT_THAT(gen.Wait(), Pointee(3));
 
   pusher.join();
 }
