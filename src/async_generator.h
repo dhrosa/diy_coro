@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "diy/coro/handle.h"
-#include "diy/coro/resume.h"
 #include "diy/coro/task.h"
 #include "diy/coro/traits.h"
 
